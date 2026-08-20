@@ -1,0 +1,38 @@
+{
+  "name": "nativewildflour-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Website for Native WILDFlour, an independent cafe in Skagway, Alaska.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "postbuild": "node scripts/normalize-export.mjs",
+    "preview": "npm run build && npx --yes serve@latest out -l 4173",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "prepare-assets": "node scripts/prepare-assets.mjs",
+    "verify": "node scripts/verify-build.mjs",
+    "preview:static": "npx --yes serve@latest out -l 4173"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "next": "^16.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22",
+    "@types/react": "^19.2",
+    "@types/react-dom": "^19.2",
+    "eslint": "^9",
+    "eslint-config-next": "^16.3.1",
+    "postcss": "^8",
+    "sharp": "^0.35",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.0"
+  }
+}
