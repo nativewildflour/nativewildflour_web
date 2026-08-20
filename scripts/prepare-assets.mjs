@@ -5,14 +5,20 @@
  * Run with:  npm run prepare-assets
  *
  * Outputs (all committed to the repo):
+ *   public/images/logo-160.webp    160 x 160   square, white background (site header badge)
  *   public/images/logo-256.png     256 x 256   square, white background
- *   public/images/logo-256.webp    256 x 256   square, white background (site header)
- *   public/images/logo-512.webp    512 x 512   square, white background
+ *   public/images/logo-256.webp    256 x 256   square, white background (photo-slot watermark)
+ *   public/images/logo-512.webp    512 x 512   square, white background (home hero)
  *   public/images/logo-1024.webp  1024 x 1024  square, white background
- *   src/app/icon.png               512 x 512   app icon  -> served at /icon.png
+ *   src/app/icon.png               192 x 192   tab icon  -> served at /icon.png
+ *   public/images/icon-512.png     512 x 512   install icon, referenced only by the manifest
  *   src/app/apple-icon.png         180 x 180   apple icon -> served at /apple-icon.png
  *   src/app/favicon.ico            16 + 32 px  PNG-in-ICO favicon -> served at /favicon.ico
  *   public/images/og-default.png  1200 x 630   social share card
+ *
+ * SIZING RULE: every raster ships at the size it is displayed — the export is unoptimized.
+ * `icon.png` is linked from every page, so it is the small one; the 512 an installed PWA
+ * wants lives in `public/images/` where only the manifest points at it.
  */
 
 import { mkdir, stat, writeFile } from 'node:fs/promises';
@@ -131,11 +137,13 @@ async function main() {
   await mkdir(p('src', 'app'), { recursive: true });
 
   const outputs = [
+    ['public/images/logo-160.webp', () => square(160, p('public', 'images', 'logo-160.webp'), 'webp')],
     ['public/images/logo-256.png', () => square(256, p('public', 'images', 'logo-256.png'), 'png')],
     ['public/images/logo-256.webp', () => square(256, p('public', 'images', 'logo-256.webp'), 'webp')],
     ['public/images/logo-512.webp', () => square(512, p('public', 'images', 'logo-512.webp'), 'webp')],
     ['public/images/logo-1024.webp', () => square(1024, p('public', 'images', 'logo-1024.webp'), 'webp')],
-    ['src/app/icon.png', () => square(512, p('src', 'app', 'icon.png'), 'png')],
+    ['src/app/icon.png', () => square(192, p('src', 'app', 'icon.png'), 'png')],
+    ['public/images/icon-512.png', () => square(512, p('public', 'images', 'icon-512.png'), 'png')],
     ['src/app/apple-icon.png', () => square(180, p('src', 'app', 'apple-icon.png'), 'png')],
     ['public/images/og-default.png', () => openGraphCard(p('public', 'images', 'og-default.png'))],
     ['src/app/favicon.ico', () => favicon(p('src', 'app', 'favicon.ico'), [16, 32])],

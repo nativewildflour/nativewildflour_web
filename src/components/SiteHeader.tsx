@@ -27,11 +27,13 @@ export function SiteHeader() {
             <span className="inline-flex shrink-0 items-center justify-center rounded-xl bg-snow p-1 shadow-card ring-1 ring-bark/10 transition-transform duration-200 ease-out motion-safe:group-hover:-rotate-3">
               {/* Decorative here: the wrapping link already carries the accessible name,
                   and the hero logo keeps the one named logo image on the page. */}
+              {/* 160px for a 48–56px render: the smallest file that still covers 3x, and
+                  React preloads this one on every page. */}
               <Image
-                src="/images/logo-256.webp"
+                src="/images/logo-160.webp"
                 alt=""
-                width={256}
-                height={256}
+                width={160}
+                height={160}
                 loading="eager"
                 sizes="56px"
                 className="h-12 w-12 rounded-lg sm:h-14 sm:w-14"

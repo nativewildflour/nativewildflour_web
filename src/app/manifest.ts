@@ -17,9 +17,17 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: '#FFF8EC',
     lang: 'en-US',
     icons: [
+      // The 512 an install wants lives in /images/ and is fetched only by installs;
+      // /icon.png is the 192px tab icon linked from every page.
+      {
+        src: '/images/icon-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any',
+      },
       {
         src: '/icon.png',
-        sizes: '512x512',
+        sizes: '192x192',
         type: 'image/png',
         purpose: 'any',
       },

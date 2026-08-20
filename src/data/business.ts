@@ -103,8 +103,6 @@ export const OPENING_HOURS: readonly OpeningHoursSpec[] = [
   },
 ];
 
-const OPEN_DAYS: ReadonlySet<Weekday> = new Set(OPENING_HOURS[0]?.dayOfWeek ?? []);
-
 /** 24-hour `HH:MM` -> `h:MM AM/PM`, e.g. `09:00` -> `9:00 AM`. */
 function formatTime(time: string): string {
   const [hours = 0, minutes = 0] = time.split(':').map(Number);
@@ -112,22 +110,78 @@ function formatTime(time: string): string {
   return `${hour12}:${String(minutes).padStart(2, '0')} ${hours >= 12 ? 'PM' : 'AM'}`;
 }
 
-/** Display form of the opening hours, derived from `OPENING_HOURS` so they cannot drift. */
-const OPEN_HOURS_DISPLAY = OPENING_HOURS[0]
-  ? `${formatTime(OPENING_HOURS[0].opens)} – ${formatTime(OPENING_HOURS[0].closes)}`
-  : 'Closed';
+/** The same clock time, compact: `09:00` -> `9 AM`, `16:30` -> `4:30 PM`. */
+function formatTimeShort(time: string): string {
+  const [hours = 0, minutes = 0] = time.split(':').map(Number);
+  const hour12 = hours % 12 === 0 ? 12 : hours % 12;
+  const suffix = hours >= 12 ? 'PM' : 'AM';
+  return minutes === 0
+    ? `${hour12} ${suffix}`
+    : `${hour12}:${String(minutes).padStart(2, '0')} ${suffix}`;
+}
+
+const SHORT_DAY: Record<Weekday, string> = {
+  Sunday: 'Sun',
+  Monday: 'Mon',
+  Tuesday: 'Tue',
+  Wednesday: 'Wed',
+  Thursday: 'Thu',
+  Friday: 'Fri',
+  Saturday: 'Sat',
+};
+
+/**
+ * Every open day mapped to the entry that opens it — read from *all* of `OPENING_HOURS`,
+ * not just the first. Splitting the week across several entries (which the schema.org shape
+ * and the README both allow) then stays impossible to get wrong: the rendered table, the
+ * summary strings and the JSON-LD all read the same map.
+ */
+const SPEC_BY_DAY: ReadonlyMap<Weekday, OpeningHoursSpec> = new Map(
+  OPENING_HOURS.flatMap((spec) => spec.dayOfWeek.map((day) => [day, spec] as const)),
+);
 
 /** One row per day of the week, in display order, for `HoursTable`. */
 export const HOURS_ROWS: readonly HoursRow[] = WEEKDAYS.map((day) => {
-  const open = OPEN_DAYS.has(day);
-  return { day, hours: open ? OPEN_HOURS_DISPLAY : 'Closed', closed: !open };
+  const spec = SPEC_BY_DAY.get(day);
+  return {
+    day,
+    hours: spec ? `${formatTime(spec.opens)} – ${formatTime(spec.closes)}` : 'Closed',
+    closed: !spec,
+  };
 });
 
-/** Long form, for body copy. */
-export const HOURS_SUMMARY = 'Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday.';
+/** Contiguous runs of days sharing the same hours — "Sunday–Friday", then "Saturday". */
+const HOURS_RUNS = (() => {
+  const runs: { days: Weekday[]; hours: string; spec: OpeningHoursSpec | undefined }[] = [];
+  for (const row of HOURS_ROWS) {
+    const last = runs.at(-1);
+    if (last && last.hours === row.hours) last.days.push(row.day);
+    else runs.push({ days: [row.day], hours: row.hours, spec: SPEC_BY_DAY.get(row.day) });
+  }
+  return runs;
+})();
 
-/** Compact form, for the hero pill. */
-export const HOURS_SHORT = 'Open Sun–Fri 9 AM–4 PM · Closed Sat';
+function runDays(days: readonly Weekday[], short: boolean): string {
+  const name = (day: Weekday) => (short ? SHORT_DAY[day] : day);
+  const first = days[0];
+  const last = days.at(-1);
+  if (!first || !last) return '';
+  return first === last ? name(first) : `${name(first)}–${name(last)}`;
+}
+
+/** Long form, for body copy: "Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday." */
+export const HOURS_SUMMARY = `${HOURS_RUNS.map((run) =>
+  run.spec
+    ? `${runDays(run.days, false)}, ${run.hours}`
+    : `Closed ${runDays(run.days, false)}`,
+).join('. ')}.`;
+
+/** Compact form, for the hero pill: "Open Sun–Fri 9 AM–4 PM · Closed Sat". */
+export const HOURS_SHORT = `Open ${HOURS_RUNS.map((run) =>
+  run.spec
+    ? `${runDays(run.days, true)} ${formatTimeShort(run.spec.opens)}–${formatTimeShort(run.spec.closes)}`
+    : `Closed ${runDays(run.days, true)}`,
+).join(' · ')}`;
 
 /** Seasonality note — the brief allows this general wording only. */
 export const SEASON_NOTE =

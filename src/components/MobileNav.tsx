@@ -14,7 +14,8 @@ const PANEL_ID = 'site-nav-panel';
 
 /**
  * Small-screen disclosure navigation.
- * The only client component on the site: a `<button aria-expanded>` plus a `<ul>` of links.
+ * One of the site's two client components (with `NavLinks`, the wide-screen nav):
+ * a `<button aria-expanded>` plus a `<ul>` of links.
  */
 export function MobileNav({ links }: MobileNavProps) {
   const [open, setOpen] = useState(false);

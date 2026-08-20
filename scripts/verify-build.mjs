@@ -50,10 +50,11 @@ const FORBIDDEN_WORDS = [
 
 const FORBIDDEN_PATTERNS = FORBIDDEN_WORDS.map((word) => ({
   word,
-  // Separator-tolerant: a space or hyphen in the rule also matches the joined
-  // spelling ("pop-up" catches "popup", "612-0303" catches "6120303").
+  // Separator-tolerant: a space or hyphen in the rule also matches the joined spelling and
+  // the other common separators ("pop-up" catches "popup", "612-0303" catches "6120303"
+  // and the dot-formatted "612.0303" that phone listings favour).
   pattern: new RegExp(
-    `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ -]/g, '[\\s-]?')}s?\\b`,
+    `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ -]/g, '[\\s.-]?')}s?\\b`,
     'i',
   ),
 }));
@@ -67,25 +68,11 @@ const WRONG_CASING = /\b(?!WILDFlour\b)[Ww][Ii][Ll][Dd][Ff][Ll][Oo][Uu][Rr]\b/;
 /** Template-bug markers that must never reach rendered copy. */
 const PLACEHOLDERS = ['undefined', '[object Object]', 'NaN'];
 
-const REQUIRED_FILES = [
-  'index.html',
-  'menu/index.html',
-  'about/index.html',
-  'directions/index.html',
-  '404.html',
-  'sitemap.xml',
-  'robots.txt',
-  'manifest.webmanifest',
-  'icon.png',
-  'apple-icon.png',
-  'images/og-default.png',
-  'images/logo-256.png',
-  'images/logo-256.webp',
-  'images/logo-512.webp',
-  'images/logo-1024.webp',
-];
-
 /**
+ * The route registry: every exported page, and the single place routes are enumerated.
+ * `REQUIRED_FILES` and `CANONICAL_PATHS` derive from it, and the `routes` group fails when
+ * `out/` contains a page this list does not, so a new route cannot ship unchecked.
+ *
  * `requiredTypes` are the schema.org `@type` values BRIEF §3 requires on that page, counting
  * nested nodes (`MenuSection`, `MenuItem`, `Question`, `Answer`). Every page inherits
  * `Restaurant` + `WebSite` from the root layout.
@@ -133,7 +120,24 @@ const PAGES = [
   },
 ];
 
-const CANONICAL_PATHS = ['/', '/menu/', '/about/', '/directions/'];
+/** The indexable routes — every page that declares a canonical URL. Derived, never retyped. */
+const CANONICAL_PATHS = PAGES.flatMap((page) => (page.canonical === null ? [] : [page.canonical]));
+
+const REQUIRED_FILES = [
+  ...PAGES.map((page) => page.file),
+  'sitemap.xml',
+  'robots.txt',
+  'manifest.webmanifest',
+  'icon.png',
+  'apple-icon.png',
+  'images/og-default.png',
+  'images/icon-512.png',
+  'images/logo-160.webp',
+  'images/logo-256.png',
+  'images/logo-256.webp',
+  'images/logo-512.webp',
+  'images/logo-1024.webp',
+];
 
 // ---------------------------------------------------------------------------
 // Result collection
@@ -200,6 +204,30 @@ function renderedText(html) {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ');
+}
+
+/**
+ * Every route `out/` actually contains, as paths relative to `out/` (`index.html`,
+ * `menu/index.html`, `404.html`). Discovered rather than assumed, so a page added without a
+ * `PAGES` entry is caught instead of silently skipping every structural check.
+ */
+async function collectRouteFiles(dir, acc = []) {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== '_next') await collectRouteFiles(full, acc);
+    } else if (entry.name === 'index.html' || entry.name === '404.html') {
+      acc.push(path.relative(OUT, full).replace(/\\/g, '/'));
+    }
+  }
+  return acc;
+}
+
+/** `9:00 AM` / `4 PM` -> 24-hour `HH:MM`, so rendered hours can be compared to the spec. */
+function to24Hour(hour, minute, suffix) {
+  const base = Number(hour) % 12;
+  const hours = /pm/i.test(suffix) ? base + 12 : base;
+  return `${String(hours).padStart(2, '0')}:${(minute ?? '00').padStart(2, '0')}`;
 }
 
 /**
@@ -281,7 +309,39 @@ async function main() {
     check(await isFile(file), `missing out/${file}`);
   }
 
+  // --- Routes ---------------------------------------------------------------
+  // Discovered from out/, so adding a page without registering it here fails loudly rather
+  // than shipping it unchecked and missing from the sitemap.
+  group('routes');
+  /**
+   * A static export emits the not-found route three ways — `404.html` (the one Netlify
+   * serves), `404/index.html` and `_not-found/index.html` — all byte-identical. They are
+   * framework artifacts of the page already registered as `404.html`, not extra routes.
+   */
+  const ROUTE_ALIASES = new Set(['404/index.html', '_not-found/index.html']);
+  const knownFiles = new Set(PAGES.map((page) => page.file));
+  for (const file of await collectRouteFiles(OUT)) {
+    check(
+      knownFiles.has(file) || ROUTE_ALIASES.has(file),
+      `out/${file} is an exported route with no PAGES entry in this script — add it here and to src/app/sitemap.ts`,
+    );
+  }
+
   // --- Per-page HTML --------------------------------------------------------
+  /**
+   * The origin every canonical and sitemap URL must share, taken from the home page's own
+   * canonical. Checks compare whole URLs against it; matching on a path suffix would accept
+   * any URL that merely ends the same way.
+   */
+  const homeHtml = await readOut('index.html');
+  const ORIGIN = (
+    homeHtml?.match(/<link\s+rel="canonical"\s+href="([^"]*)"/i)?.[1] ?? ''
+  ).replace(/\/$/, '');
+  check(
+    /^https?:\/\/[^/]+$/.test(ORIGIN),
+    `home canonical does not yield an absolute origin (got "${ORIGIN}")`,
+  );
+
   /** @type {Map<string, {html: string, jsonLd: object[]}>} */
   const loaded = new Map();
 
@@ -316,18 +376,12 @@ async function main() {
         `404 needs exactly one noindex robots tag, found ${JSON.stringify(robotsTags)}`,
       );
     } else {
+      // Whole-URL comparison: a copy-pasted canonical from another page ends in "/" too.
+      const expectedCanonical = `${ORIGIN}${page.canonical}`;
       check(Boolean(canonical), 'missing canonical link');
       check(
-        !canonical || /^https?:\/\//.test(canonical),
-        `canonical is not absolute: ${canonical}`,
-      );
-      check(
-        !canonical || canonical.endsWith(page.canonical),
-        `canonical does not end with "${page.canonical}": ${canonical}`,
-      );
-      check(
-        !canonical || page.canonical === '/' || canonical.endsWith('/'),
-        `canonical lacks a trailing slash: ${canonical}`,
+        !canonical || canonical === expectedCanonical,
+        `canonical is "${canonical}", expected "${expectedCanonical}"`,
       );
     }
 
@@ -414,19 +468,18 @@ async function main() {
   group('sitemap.xml');
   const sitemap = (await readOut('sitemap.xml')) ?? '';
   const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
-  check(locs.length === 4, `expected exactly 4 <loc> entries, found ${locs.length}`);
-  for (const suffix of CANONICAL_PATHS) {
-    check(
-      locs.some((loc) => /^https?:\/\//.test(loc) && loc.endsWith(suffix)),
-      `no absolute URL ending in "${suffix}"`,
-    );
+  // Exact set equality against the routes registered above — every indexable page present,
+  // nothing else, each spelled as the full canonical URL.
+  const expectedLocs = CANONICAL_PATHS.map((canonical) => `${ORIGIN}${canonical}`);
+  check(
+    locs.length === expectedLocs.length,
+    `expected exactly ${expectedLocs.length} <loc> entries, found ${locs.length}`,
+  );
+  for (const url of expectedLocs) {
+    check(locs.includes(url), `sitemap is missing ${url}`);
   }
   for (const loc of locs) {
-    check(loc.endsWith('/'), `sitemap URL lacks a trailing slash: ${loc}`);
-    check(
-      CANONICAL_PATHS.some((suffix) => loc.endsWith(suffix)),
-      `unexpected sitemap URL: ${loc}`,
-    );
+    check(expectedLocs.includes(loc), `unexpected sitemap URL: ${loc}`);
   }
 
   // --- robots.txt -----------------------------------------------------------
@@ -502,9 +555,11 @@ async function main() {
       check(text.includes(PHONE_DISPLAY), `${label}: does not render "${PHONE_DISPLAY}"`);
       check(entry.html.includes(PHONE_HREF), `${label}: no ${PHONE_HREF} link`);
     }
-    // Any other rendering of a 907-612 number is wrong. Drop the (correct) E.164 hrefs first,
-    // otherwise `tel:+19076120002` reads as an unformatted number.
-    const humanText = text.split(PHONE_HREF).join(' ').split(PHONE_E164).join(' ');
+    // Any other rendering of a 907-612 number is wrong. Drop the (correct) `tel:` hrefs first,
+    // otherwise `tel:+19076120002` reads as an unformatted number. Only the full href is
+    // removed: splitting on the bare E.164 string too would also erase a visibly rendered
+    // `+19076120002` — exactly the mistake this check exists to catch.
+    const humanText = text.split(PHONE_HREF).join(' ');
     const wrongFormat = humanText.match(/\(?907\)?[\s.-]?612[\s.-]?\d{4}/g) ?? [];
     for (const found of wrongFormat) {
       check(
@@ -512,6 +567,35 @@ async function main() {
         `${label}: phone rendered as "${found}", expected "${PHONE_DISPLAY}"`,
       );
     }
+  }
+
+  // --- Hours ----------------------------------------------------------------
+  // The other half of "phone + hours must match the rendered copy": every opening-hours
+  // range a page actually prints is parsed and compared to the spec, so a hand-edited
+  // display string cannot contradict the table and the JSON-LD it sits beside.
+  group('hours');
+  const HOURS_RANGE =
+    /\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*(?:–|—|-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/gi;
+  for (const page of PAGES) {
+    const entry = loaded.get(page.file);
+    if (!entry) continue;
+    const label = `out/${page.file}`;
+    const text = renderedText(entry.html);
+    const ranges = [...text.matchAll(HOURS_RANGE)];
+    check(ranges.length > 0, `${label}: renders no opening-hours range`);
+    for (const [found, openHour, openMinute, openSuffix, closeHour, closeMinute, closeSuffix] of ranges) {
+      const opens = to24Hour(openHour, openMinute, openSuffix);
+      const closes = to24Hour(closeHour, closeMinute, closeSuffix);
+      check(
+        opens === OPENS && closes === CLOSES,
+        `${label}: renders hours "${found}" (${opens}–${closes}), expected ${OPENS}–${CLOSES}`,
+      );
+    }
+    // The closed day must be named as closed wherever the week is listed.
+    check(
+      !text.includes(CLOSED_DAY) || /Closed/.test(text),
+      `${label}: names ${CLOSED_DAY} without marking it closed`,
+    );
   }
 
   // ---------------------------------------------------------------------------

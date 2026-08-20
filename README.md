@@ -202,32 +202,32 @@ The site ships with **no photography**. The only source raster is `assets/logo.j
 is typography, color, CSS and inline SVG. Real photos have to come from the owner — do not take
 images from Facebook, Yelp or any other listing.
 
-`src/components/about/PhotoSlot.tsx` marks where a photograph belongs. It renders a dashed frame
+`src/components/PhotoSlot.tsx` marks where a photograph belongs. It renders a dashed frame
 with the logo watermark and the caption underneath, so the layout already reserves the space:
 
 ```tsx
 <PhotoSlot caption="Kelly at the counter" />
 ```
 
-It is used once today, on `/about/`. To turn a slot into a real photo:
+It is used twice today — on `/about/` ("Kelly at the counter") and on the home page ("Fresh-fried
+bannock, ready for a topping"). To turn a slot into a real photo:
 
 1. Save the image into `public/images/`, already cropped and resized — images are **not** optimized
    at build time, so ship the file at the size it will be displayed.
-2. In `PhotoSlot.tsx`, replace the dashed `<div>` with the real image, using the file's true pixel
-   dimensions:
+2. Add `src` and the file's true pixel dimensions **at that call site** — not inside
+   `PhotoSlot.tsx`, which renders on both pages and would then show one photo under every caption:
 
    ```tsx
-   <Image
+   <PhotoSlot
+     caption="Kelly at the counter"
      src="/images/kelly-at-the-counter.jpg"
-     alt={caption}
      width={1200}
      height={900}
-     className="h-auto w-full rounded-2xl object-cover shadow-sm"
    />
    ```
 
 3. Nothing else changes — `caption` is already both the visible caption and the alt text, so every
-   usage keeps describing its own picture.
+   usage keeps describing its own picture. Slots left without a `src` keep the placeholder.
 
 To add more slots, drop `<PhotoSlot caption="…" />` wherever a photo belongs. Good candidates, in
 priority order:

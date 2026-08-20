@@ -1,5 +1,7 @@
 [build]
-  command = "npm run build"
+  # `verify` is the acceptance gate (docs/BRIEF.md §5) — running it here is what makes
+  # the content rules enforced rather than merely documented. A failing check fails the deploy.
+  command = "npm run build && npm run verify"
   publish = "out"
 
 [build.environment]

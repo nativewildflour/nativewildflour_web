@@ -47,7 +47,9 @@ export default function NotFound() {
     <Container width="3xl">
       <div className="py-20 text-center">
         <FireweedSprig bloom className="mx-auto h-10 w-8" />
-        <p className="mt-4 font-display text-6xl font-black tracking-tight text-wood/40 sm:text-7xl">
+        {/* Real, screen-reader-visible text, so it must clear WCAG AA for large text:
+            wood at 75% over cream is 3.31:1 (wood/40 was 1.79:1). */}
+        <p className="mt-4 font-display text-6xl font-black tracking-tight text-wood/75 sm:text-7xl">
           404
         </p>
         <h1 className="mt-3 text-4xl font-black text-bark sm:text-5xl">

@@ -57,7 +57,8 @@ A neighboring restaurant could not truthfully copy the passed-down-family-recipe
   bakery-cafe and must never be described with the food-truck family of words (BRIEF §2).
 - Bannock is described respectfully and in general terms — no attribution to a specific
   tribe, no historical claims.
-- No client JS beyond the small-screen nav disclosure; no analytics; static export served
+- No client JS beyond the header navigation (the small-screen disclosure and the
+  wide-screen current-page state); no analytics; static export served
   as plain files.
 - Explicitly unknown facts (do not invent): exact season start/end dates, street number,
   email address, owner's surname.

@@ -3,9 +3,25 @@
  * See docs/BRIEF.md §4 `/directions/`.
  */
 
-import { GEO } from './business';
+import { GEO, HOURS_SUMMARY, SEASON_NOTE } from './business';
 
 const COORDS = `${GEO.latitude},${GEO.longitude}`;
+
+/**
+ * Half-span of the embedded map's viewport, in degrees — hand-tuned to frame downtown
+ * Skagway. The centre itself comes from `GEO`, like every other link here, so correcting
+ * the coordinates moves the visible pin and not just the buttons.
+ */
+const EMBED_SPAN = { longitude: 0.00575, latitude: 0.00325 };
+
+const EMBED_BBOX = [
+  GEO.longitude - EMBED_SPAN.longitude,
+  GEO.latitude - EMBED_SPAN.latitude,
+  GEO.longitude + EMBED_SPAN.longitude,
+  GEO.latitude + EMBED_SPAN.latitude,
+]
+  .map((value) => value.toFixed(4))
+  .join(',');
 
 export interface MapLinks {
   /** `src` for the OpenStreetMap iframe. */
@@ -21,8 +37,7 @@ export interface MapLinks {
 }
 
 export const MAP_LINKS: MapLinks = {
-  osmEmbed:
-    'https://www.openstreetmap.org/export/embed.html?bbox=-135.3265,59.4505,-135.3150,59.4570&layer=mapnik&marker=59.4539,-135.3209',
+  osmEmbed: `https://www.openstreetmap.org/export/embed.html?bbox=${EMBED_BBOX}&layer=mapnik&marker=${COORDS}`,
   osmPage: `https://www.openstreetmap.org/?mlat=${GEO.latitude}&mlon=${GEO.longitude}#map=17/${GEO.latitude}/${GEO.longitude}`,
   googleMaps: `https://www.google.com/maps/search/?api=1&query=${COORDS}`,
   googleDirections: `https://www.google.com/maps/dir/?api=1&destination=${COORDS}`,
@@ -138,11 +153,22 @@ export interface FaqItem {
   readonly answer: string;
 }
 
+/**
+ * "About 5–8 minutes on foot from the Broadway Dock, 8–12 minutes from the Ore Dock, and
+ * 15–20 minutes from the Railroad Dock." Composed from `DOCKS` so the FAQ answer — which is
+ * also the FAQPage rich result — cannot outlive a change to a dock's walking time.
+ */
+const DOCK_WALK_SENTENCE = `About ${DOCKS.map((dock, index) => {
+  const walk = dock.walkMinutes.replace('~', '');
+  const lead = index > 0 && index === DOCKS.length - 1 ? 'and ' : '';
+  const onFoot = index === 0 ? ' on foot' : '';
+  return `${lead}${walk}${onFoot} from the ${dock.name}`;
+}).join(', ')}.`;
+
 export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: 'How far is Native WILDFlour from the cruise ship docks?',
-    answer:
-      'About 5–8 minutes on foot from the Broadway Dock, 8–12 minutes from the Ore Dock, and 15–20 minutes from the Railroad Dock. Walking times are approximate; follow port signage and your all-aboard time.',
+    answer: `${DOCK_WALK_SENTENCE} ${WALKING_CAVEAT}`,
   },
   {
     question: 'Is the walk flat and wheelchair friendly?',
@@ -150,9 +176,10 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
       'The walk from the Broadway Dock and the Ore Dock is flat and paved on downtown sidewalks and streets. From the Railroad Dock you can also ride the SMART shuttle bus into town.',
   },
   {
+    // Composed, not restated: this answer feeds the FAQPage rich result, so it must not be
+    // able to disagree with the hours table rendered on the same page.
     question: 'What are your hours?',
-    answer:
-      'Sunday through Friday, 9:00 AM to 4:00 PM. Closed Saturday. Hours are seasonal and follow the summer cruise season.',
+    answer: `${HOURS_SUMMARY} ${SEASON_NOTE}`,
   },
   {
     question: 'Do you take reservations?',
