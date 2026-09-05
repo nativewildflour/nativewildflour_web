@@ -1,10 +1,14 @@
 import { FireweedSprig } from '@/components/Decor';
 import { Section } from '@/components/Section';
 import { QuoteMarkIcon } from '@/components/home/HomeIcons';
-import { TESTIMONIAL } from '@/data/business';
+import type { HomeContent } from '@/lib/content/home';
 
-/** The Kayla F. recommendation, quoted verbatim. */
-export function HomeTestimonial() {
+export interface HomeTestimonialProps {
+  readonly content: HomeContent['testimonial'];
+}
+
+/** A visitor's recommendation, quoted verbatim. */
+export function HomeTestimonial({ content }: HomeTestimonialProps) {
   return (
     <Section tone="sky" width="3xl">
       {/* Visually the quote speaks for itself; the heading exists for screen-reader
@@ -16,11 +20,11 @@ export function HomeTestimonial() {
 
         <QuoteMarkIcon className="relative h-9 w-9 text-fireweed/60" />
         <blockquote className="relative mt-4 font-display text-xl leading-snug font-semibold text-bark sm:text-2xl">
-          <p>{TESTIMONIAL.quote}</p>
+          <p>{content.quote}</p>
         </blockquote>
         <figcaption className="relative mt-6 flex items-center gap-2 text-sm font-bold tracking-wide text-bark/70">
           <FireweedSprig className="h-6 w-4 shrink-0" />
-          {TESTIMONIAL.attribution}
+          {content.attribution}
         </figcaption>
       </figure>
     </Section>

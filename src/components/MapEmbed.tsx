@@ -1,4 +1,4 @@
-import { MAP_LINKS, MAP_TITLE } from '@/data/directions';
+import { MAP_LINKS, MAP_TITLE } from '@/data/map';
 
 export interface MapEmbedProps {
   /** Accessible name for the iframe. Defaults to `MAP_TITLE`. */

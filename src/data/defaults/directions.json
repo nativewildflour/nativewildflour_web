@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "intro": {
+    "title": "Find Us: Directions for Cruise Passengers & Visitors",
+    "lede": "We are on the corner of First Avenue & State Street in downtown Skagway, one block west of Broadway and a short walk from the cruise ship docks.",
+    "walkBadge": "Roughly 5 to 20 minutes on foot, depending on your dock"
+  },
+  "orientation": {
+    "eyebrow": "Getting oriented",
+    "title": "Where we are in town",
+    "lead": "Our corner sits at the southern end of downtown. Here is what to steer by.",
+    "notes": [
+      "We are at 1st Avenue & State Street, at the southern end of downtown, one block west of Broadway.",
+      "Centennial Park — home of the big rotary snowplow at 1st & Broadway — is our nearest landmark.",
+      "State Street is the Klondike Highway as it enters town."
+    ],
+    "photo": {
+      "caption": "Our corner at First Avenue & State Street",
+      "image": null
+    }
+  },
+  "docks": {
+    "eyebrow": "Dock by dock",
+    "title": "From your cruise ship",
+    "lead": "Find your dock below for the walk into town, step by step.",
+    "caveat": "Walking times are approximate; follow port signage and your ship’s all-aboard time.",
+    "items": [
+      {
+        "id": "broadway-dock",
+        "name": "Broadway Dock",
+        "walkMinutes": "~5–8 minutes",
+        "summary": "The closest dock to us. Flat and paved the whole way.",
+        "steps": [
+          "Walk off the pier toward town along Congress Way.",
+          "Continue to the foot of Broadway at 1st Avenue, beside Centennial Park.",
+          "Turn left (west) on 1st Avenue.",
+          "We’re one block ahead, at the corner of 1st Avenue and State Street."
+        ]
+      },
+      {
+        "id": "ore-dock",
+        "name": "Ore Dock",
+        "walkMinutes": "~8–12 minutes",
+        "summary": "A slightly longer waterfront walk. Flat and paved.",
+        "steps": [
+          "Follow the waterfront path east toward the Small Boat Harbor and Congress Way.",
+          "Head north on Congress Way to 1st Avenue.",
+          "Turn left on 1st Avenue and walk to State Street."
+        ]
+      },
+      {
+        "id": "railroad-dock",
+        "name": "Railroad Dock",
+        "walkMinutes": "~15–20 minutes",
+        "summary": "The farthest dock. Walk it, ride the port shuttle, or take the SMART shuttle bus downtown.",
+        "steps": [
+          "Depending on your berth you may walk the paved harbor path, ride the port’s free shuttle through the rock-fall zone, or tender to shore.",
+          "Follow the harbor path west to Congress Way.",
+          "Head north to 1st Avenue, then turn left to State Street.",
+          "Prefer to ride? Hop on the SMART shuttle bus downtown."
+        ]
+      }
+    ]
+  },
+  "shuttle": {
+    "name": "SMART shuttle",
+    "description": "Skagway’s town bus loops between the docks and downtown roughly every 15 minutes in season.",
+    "notes": [
+      "Small per-ride fare; day passes are available.",
+      "Ask the driver for the stop nearest 1st Avenue & State Street."
+    ]
+  },
+  "arriving": {
+    "title": "Arriving by car, RV, ferry or train",
+    "notes": [
+      "By road: the Klondike Highway becomes State Street. Follow it south to 1st Avenue.",
+      "By ferry: the Alaska Marine Highway terminal is at the south end of town, near the docks.",
+      "By train: the White Pass & Yukon Route depot is at 2nd Avenue & Spring Street, two short blocks east."
+    ]
+  },
+  "tips": {
+    "title": "Tips for your visit",
+    "lead": "A few things worth knowing before you walk over.",
+    "items": [
+      "Budget 20–30 minutes round trip from the closest docks.",
+      "Specials sell out — come early.",
+      "We are a grab-and-go spot: order at the window, made to go.",
+      "Mornings are best for coffee and bannock; the lunch special lands around midday."
+    ]
+  },
+  "faq": {
+    "title": "Frequently asked questions",
+    "items": [
+      {
+        "question": "How far is Native WILDFlour from the cruise ship docks?",
+        "answer": "About 5–8 minutes on foot from the Broadway Dock, 8–12 minutes from the Ore Dock, and 15–20 minutes from the Railroad Dock. Walking times are approximate; follow port signage and your ship’s all-aboard time."
+      },
+      {
+        "question": "Is the walk flat and wheelchair friendly?",
+        "answer": "The walk from the Broadway Dock and the Ore Dock is flat and paved on downtown sidewalks and streets. From the Railroad Dock you can also ride the SMART shuttle bus into town."
+      },
+      {
+        "question": "What are your hours?",
+        "answer": "Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday. Open for the summer cruise season — seasonal updates are posted on Facebook."
+      },
+      {
+        "question": "Do you take reservations?",
+        "answer": "No — walk up and order at the window."
+      },
+      {
+        "question": "Where can I see today’s special?",
+        "answer": "Today’s lunch special is posted on our Facebook page."
+      }
+    ]
+  }
+}

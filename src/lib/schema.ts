@@ -1,6 +1,7 @@
 /**
- * schema.org JSON-LD builders. Everything is derived from `src/data/*` and `SITE_URL`,
- * so the structured data can never drift from what the pages render.
+ * schema.org JSON-LD builders. The business facts come from `src/data/*` and `SITE_URL`; the
+ * menu arrives as an argument, from the same loaded document the page renders — so the
+ * structured data can never drift from what the visitor sees.
  */
 
 import {
@@ -11,9 +12,9 @@ import {
   OPENING_HOURS,
   PHONE,
 } from '@/data/business';
-import { MAP_LINKS } from '@/data/directions';
-import type { FaqItem } from '@/data/directions';
-import { MENU_SECTIONS } from '@/data/menu';
+import { MAP_LINKS } from '@/data/map';
+import type { FaqItem } from '@/lib/content/directions';
+import type { MenuSectionContent } from '@/lib/menu-content';
 import { LOGO_URL, OG_IMAGE_URL, SITE_URL, absoluteUrl } from '@/lib/site';
 
 const SCHEMA_CONTEXT = 'https://schema.org' as const;
@@ -184,7 +185,7 @@ export function webSiteSchema(): WebSiteSchema {
   };
 }
 
-export function menuSchema(): MenuSchema {
+export function menuSchema(sections: readonly MenuSectionContent[]): MenuSchema {
   return {
     '@context': SCHEMA_CONTEXT,
     '@type': 'Menu',
@@ -192,7 +193,7 @@ export function menuSchema(): MenuSchema {
     name: `${BUSINESS_NAME} Menu`,
     url: absoluteUrl('/menu/'),
     inLanguage: 'en-US',
-    hasMenuSection: MENU_SECTIONS.map((section) => ({
+    hasMenuSection: sections.map((section) => ({
       '@type': 'MenuSection' as const,
       name: section.name,
       ...(section.description ? { description: section.description } : {}),

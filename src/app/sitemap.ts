@@ -8,7 +8,7 @@ export const dynamic = 'force-static';
  * Pinned so the exported `sitemap.xml` is byte-identical between builds.
  * Bump the date whenever page content changes materially.
  */
-const LAST_MODIFIED = '2026-08-19';
+const LAST_MODIFIED = '2026-09-02';
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = LAST_MODIFIED;

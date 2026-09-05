@@ -16,7 +16,8 @@ const NOTE_ICONS: Record<NoteIcon, NoteIconStyle> = {
   check: { Icon: CheckIcon, tint: 'bg-fireweed/10 text-fireweed' },
 };
 
-const COLUMNS: Record<2 | 3, string> = {
+const COLUMNS: Record<1 | 2 | 3, string> = {
+  1: 'grid-cols-1',
   2: 'sm:grid-cols-2',
   3: 'sm:grid-cols-2 lg:grid-cols-3',
 };
@@ -29,8 +30,8 @@ const SURFACES = {
 export interface NoteListProps {
   readonly items: readonly string[];
   readonly icon: NoteIcon;
-  /** Card columns from the `sm` breakpoint up. Defaults to 3. */
-  readonly columns?: 2 | 3;
+  /** Card columns from the `sm` breakpoint up. Defaults to 3; `1` stays a single column. */
+  readonly columns?: 1 | 2 | 3;
   /** Card background — pick the one that contrasts with the section tone. */
   readonly surface?: keyof typeof SURFACES;
   readonly className?: string;

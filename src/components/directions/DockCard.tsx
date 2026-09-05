@@ -1,4 +1,4 @@
-import type { Dock } from '@/data/directions';
+import type { Dock } from '@/lib/content/directions';
 
 import { ClockIcon } from '@/components/directions/Icons';
 

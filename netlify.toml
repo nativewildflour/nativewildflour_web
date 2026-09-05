@@ -1,11 +1,56 @@
+# How this site runs
+# -------------------
+# Next renders the pages on Netlify, it is not exported to files. The owner's content lives in
+# the `site-content` blob store and is read at request time, so the repository holds only the
+# defaults in src/data/defaults/ and no build ever touches a blob: a deploy and a publish are
+# independent events. Each public page carries `revalidate = 60`, so a render is cached and
+# re-read at most once a minute — and the moment a save lands, the publish endpoint calls
+# /admin/api/revalidate to drop that cache immediately. `refresh-content` below does the same
+# for a fresh deploy, whose prerendered pages were built from the defaults.
+#
+# Three request-time pieces sit beside the Next runtime, all routed by path specificity, which
+# is what lets them win over the runtime's catch-all `/*`:
+#   - netlify/edge-functions/admin-auth.ts   Basic auth over everything under /admin
+#   - netlify/functions/admin-*.mts          the admin APIs under /admin/api/
+#   - netlify/functions/uploads.mts          the owner's photos at /images/uploads/:id
+
 [build]
   # `verify` is the acceptance gate (docs/BRIEF.md §5) — running it here is what makes
   # the content rules enforced rather than merely documented. A failing check fails the deploy.
+  # It starts the built site with `next start` and checks it over HTTP, so it must run after
+  # `next build` and before the deploy.
   command = "npm run build && npm run verify"
-  publish = "out"
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "22"
+
+# The Next.js runtime: turns `.next` into the server handler that renders every page request.
+# Pinned as a devDependency so a deploy cannot pick up a new major on its own.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# After the deploy goes live, asks it to re-render the public pages from the blob store — a
+# build has no Blobs context, so what it prerendered is the committed defaults. Best-effort by
+# design; see netlify/plugins/refresh-content/index.mjs.
+[[plugins]]
+  package = "./netlify/plugins/refresh-content"
+
+# The admin APIs (netlify/functions/admin-content.mts, admin-images.mts) and the public photo
+# endpoint (uploads.mts). Edge functions have no directory setting — Netlify only discovers them
+# in netlify/edge-functions, so that name is fixed.
+[functions]
+  directory = "netlify/functions"
+
+# Basic-auth guard (netlify/edge-functions/admin-auth.ts) over the whole admin section:
+# the landing page needs its own rule because "/admin/*" alone does not match "/admin".
+[[edge_functions]]
+  path = "/admin"
+  function = "admin-auth"
+
+[[edge_functions]]
+  path = "/admin/*"
+  function = "admin-auth"
 
 [[headers]]
   for = "/*"
@@ -20,6 +65,9 @@
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
 
+# The site's own artwork, shipped in public/. Owner photos live under /images/uploads/ and are
+# served by netlify/functions/uploads.mts, which sets its own immutable Cache-Control and
+# Netlify-CDN-Cache-Control: their ids are never reused, so they can be cached for a year.
 [[headers]]
   for = "/images/*"
   [headers.values]
@@ -46,6 +94,16 @@
   [headers.values]
     Cache-Control = "public, max-age=86400, stale-while-revalidate=604800"
 
+# Nothing under /admin is cached or indexed. The edge guard sets the same headers on the
+# responses it passes through; this rule is the backstop for anything it does not cover.
+[[headers]]
+  for = "/admin/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    X-Robots-Tag = "noindex, nofollow"
+
 # NOTE: Netlify header patterns support only trailing "/*" splats — an extension glob
-# like "/*.txt" matches nothing. The RSC .txt prefetch payloads are kept out of search
-# results via the Disallow rule in src/app/robots.ts instead.
+# like "/*.txt" matches nothing, so a rule cannot be aimed at a file extension. Nothing needs
+# one now: the RSC prefetch payloads that a static export wrote out as per-route .txt files are
+# served by the Next runtime from the page's own URL instead. The Disallow rule in
+# src/app/robots.ts stays anyway — it costs nothing and still covers a crawler that asks.

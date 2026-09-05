@@ -1,4 +1,4 @@
-import type { FaqItem } from '@/data/directions';
+import type { FaqItem } from '@/lib/content/directions';
 
 export interface FaqProps {
   readonly items: readonly FaqItem[];

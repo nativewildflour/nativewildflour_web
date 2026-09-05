@@ -2,14 +2,19 @@ import { ButtonLink } from '@/components/ButtonLink';
 import { Section } from '@/components/Section';
 import { ClockIcon, MapPinIcon, PhoneIcon, ShipIcon } from '@/components/home/HomeIcons';
 import { ADDRESS, HOURS_SUMMARY, PHONE, SEASON_NOTE } from '@/data/business';
-import { CLOSEST_DOCK, CLOSEST_DOCK_WALK, MAP_LINKS } from '@/data/directions';
+import { MAP_LINKS } from '@/data/map';
+import type { HomeContent } from '@/lib/content/home';
 
 const CARD = 'rounded-3xl bg-cream p-6 shadow-card ring-1 ring-bark/10 sm:p-8';
 
+export interface VisitUsProps {
+  readonly content: HomeContent['visit'];
+}
+
 /** "Visit us" — address, hours, phone, map links and the cruise-passenger teaser. */
-export function VisitUs() {
+export function VisitUs({ content }: VisitUsProps) {
   return (
-    <Section id="visit" tone="snow" eyebrow="First Avenue & State Street" title="Visit us" width="6xl">
+    <Section id="visit" tone="snow" eyebrow={content.eyebrow} title={content.title} width="6xl">
       {/* items-start: each card hugs its content instead of stretching to the taller one. */}
       <div className="grid gap-6 md:grid-cols-2 md:items-start">
         <div className={CARD}>
@@ -24,9 +29,7 @@ export function VisitUs() {
             {ADDRESS.locality}, {ADDRESS.region} {ADDRESS.postalCode}
           </address>
 
-          <p className="mt-2 text-bark/75">
-            On the corner, one block west of Broadway at the southern end of downtown.
-          </p>
+          <p className="mt-2 text-bark/75">{content.locationNote}</p>
 
           <p className="mt-4">
             <a
@@ -64,12 +67,8 @@ export function VisitUs() {
           <ShipIcon className="h-6 w-6" />
         </span>
         <div>
-          <h3 className="text-xl font-black text-bark">Off a cruise ship?</h3>
-          <p className="mt-2 text-bark/85">
-            The walk from the {CLOSEST_DOCK.name} takes about {CLOSEST_DOCK_WALK}, flat and paved
-            the whole way, and we are one block west of Broadway on 1st Avenue. Our directions page
-            has step-by-step routes from each dock, approximate walking times and the SMART shuttle.
-          </p>
+          <h3 className="text-xl font-black text-bark">{content.cruiseTitle}</h3>
+          <p className="mt-2 text-bark/85">{content.cruiseBody}</p>
           <div className="mt-4">
             <ButtonLink href="/directions/" variant="secondary">
               See directions from every dock

@@ -1,20 +1,21 @@
 import { menuAccent } from '@/components/menu/accents';
-import { MENU_SECTIONS } from '@/data/menu';
+import type { MenuSectionContent } from '@/lib/menu-content';
 
 export interface MenuJumpLinksProps {
+  readonly sections: readonly MenuSectionContent[];
   readonly className?: string;
 }
 
 /**
- * Anchor chips that jump to each menu section. Reads the menu data itself.
- * Each chip carries its section's accent as a legend dot — the same color the
- * section card answers with in its heading stroke and `:target` flash.
+ * Anchor chips that jump to each menu section. Each chip carries its section's accent as a
+ * legend dot — the same color the section card answers with in its heading stroke and
+ * `:target` flash.
  */
-export function MenuJumpLinks({ className = '' }: MenuJumpLinksProps) {
+export function MenuJumpLinks({ sections, className = '' }: MenuJumpLinksProps) {
   return (
     <nav aria-label="Jump to a menu section" className={className}>
       <ul className="flex flex-wrap gap-2">
-        {MENU_SECTIONS.map((section) => (
+        {sections.map((section) => (
           <li key={section.id}>
             <a
               href={`#${section.id}`}

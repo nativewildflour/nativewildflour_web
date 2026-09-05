@@ -183,28 +183,11 @@ export const HOURS_SHORT = `Open ${HOURS_RUNS.map((run) =>
     : `Closed ${runDays(run.days, true)}`,
 ).join(' · ')}`;
 
-/** Seasonality note — the brief allows this general wording only. */
+/**
+ * Seasonality note — the brief allows this general wording only.
+ *
+ * Kept here rather than in the editable page documents because it is the one seasonal claim the
+ * brief permits, and it appears on more than one page.
+ */
 export const SEASON_NOTE =
   'Open for the summer cruise season — seasonal updates are posted on Facebook.';
-
-export const OWNER = {
-  firstName: 'Kelly',
-  training: 'Culinary Art Institute in Seattle',
-  inspiration: 'her Grammy',
-} as const;
-
-export interface Testimonial {
-  readonly quote: string;
-  readonly attribution: string;
-}
-
-/** Quote verbatim; attribute exactly as written. */
-export const TESTIMONIAL: Testimonial = {
-  quote:
-    'This is the ONLY authentic bannock available in Skagway. The owner, Kelly, is an absolute gem… Armed with her passed down family recipe, her bannock melts in your mouth and fills you with joy. Enjoy a variety of toppings including her own hand made rhubarb jam!',
-  attribution: 'Kayla F., Facebook recommendation',
-};
-
-/** Respectful, general description of bannock — see docs/BRIEF.md §1. */
-export const BANNOCK_EXPLAINER =
-  'Bannock is a simple, hearty bread — flour, water, a little fat and leavening — pan-fried or baked until golden. It is a beloved staple across Alaska Native and First Nations communities and throughout the North, and families pass down their own versions.';

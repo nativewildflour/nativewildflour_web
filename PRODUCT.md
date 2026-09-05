@@ -58,8 +58,9 @@ A neighboring restaurant could not truthfully copy the passed-down-family-recipe
 - Bannock is described respectfully and in general terms — no attribution to a specific
   tribe, no historical claims.
 - No client JS beyond the header navigation (the small-screen disclosure and the
-  wide-screen current-page state); no analytics; static export served
-  as plain files.
+  wide-screen current-page state); no analytics. Pages are served from Netlify's
+  cache and re-rendered from Netlify Blobs when the owner publishes, so content lives
+  in Netlify, not the repository, and a save is live within seconds with no build.
 - Explicitly unknown facts (do not invent): exact season start/end dates, street number,
   email address, owner's surname.
 

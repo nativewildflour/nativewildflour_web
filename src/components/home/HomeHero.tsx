@@ -1,11 +1,33 @@
 import Image from 'next/image';
+import type { ReactNode } from 'react';
 
 import { ButtonLink } from '@/components/ButtonLink';
 import { Container } from '@/components/Container';
 import { FireweedSprig, RidgeDivider } from '@/components/Decor';
 import { ClockIcon } from '@/components/home/HomeIcons';
-import { ADDRESS, BUSINESS_NAME, COFFEE_ROASTER, HOURS_SHORT, MOTTO } from '@/data/business';
-import { CLOSEST_DOCK, CLOSEST_DOCK_WALK } from '@/data/directions';
+import { BUSINESS_NAME, HOURS_SHORT, MOTTO } from '@/data/business';
+import type { HomeContent } from '@/lib/content/home';
+
+export interface HomeHeroProps {
+  readonly hero: HomeContent['hero'];
+}
+
+/**
+ * The headline with one word picked out in fireweed pink. The word is content, not markup, so
+ * the owner can move the emphasis without touching a component; a word that is not in the
+ * headline simply leaves it unmarked (the editor refuses to publish that, so it never ships).
+ */
+function accentedHeading(heading: string, accentWord: string): ReactNode {
+  const at = accentWord === '' ? -1 : heading.indexOf(accentWord);
+  if (at < 0) return heading;
+  return (
+    <>
+      {heading.slice(0, at)}
+      <span className="text-fireweed">{accentWord}</span>
+      {heading.slice(at + accentWord.length)}
+    </>
+  );
+}
 
 /**
  * Home hero: a Skagway scene — sky wash, a low sun, mountain ridges along the
@@ -13,7 +35,7 @@ import { CLOSEST_DOCK, CLOSEST_DOCK_WALK } from '@/data/directions';
  * hours tag. Every moving part is CSS; the entrance collapses under
  * `prefers-reduced-motion`.
  */
-export function HomeHero() {
+export function HomeHero({ hero }: HomeHeroProps) {
   return (
     <section className="relative overflow-hidden border-b border-bark/10">
       {/* Sky wash. */}
@@ -41,14 +63,10 @@ export function HomeHero() {
             </p>
 
             <h1 className="rise rise-2 mt-4 text-4xl font-black text-bark sm:text-6xl lg:text-[4.25rem] lg:leading-[1.05]">
-              Authentic Alaskan <span className="text-fireweed">Bannock</span> in Skagway, Alaska
+              {accentedHeading(hero.heading, hero.accentWord)}
             </h1>
 
-            <p className="rise rise-3 mt-6 max-w-2xl text-lg text-bark/85 sm:text-xl">
-              Fresh-fried bannock from a passed-down family recipe, house-baked cookies and muffins,
-              and Alaska-roasted {COFFEE_ROASTER}. Find our little cafe at {ADDRESS.street} in
-              downtown Skagway — about {CLOSEST_DOCK_WALK} on foot from the {CLOSEST_DOCK.name}.
-            </p>
+            <p className="rise rise-3 mt-6 max-w-2xl text-lg text-bark/85 sm:text-xl">{hero.lede}</p>
 
             <div className="rise rise-4 mt-9 flex flex-wrap items-center gap-3">
               <ButtonLink href="/menu/" size="lg">

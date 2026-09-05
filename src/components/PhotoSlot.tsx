@@ -1,5 +1,8 @@
 import Image from 'next/image';
 
+import type { PhotoContent } from '@/lib/content/images';
+import { imageSrc } from '@/lib/content/images';
+
 /**
  * PHOTO SLOT — an owner-replaceable image placeholder.
  *
@@ -8,22 +11,17 @@ import Image from 'next/image';
  * this renders a tasteful dashed frame with the logo badge in the middle so the layout
  * already reserves the space a photo will occupy.
  *
- * HOW TO DROP IN A REAL PHOTO — edit the *usage*, never this file. The component renders on
- * more than one page, so hardcoding an image here would put the same photo under every
- * caption on the site.
+ * There are two ways to fill it, and both keep the caption doing double duty as the visible
+ * caption and the alt text:
  *
- *   1. Save the image into `public/images/`, already cropped and resized. Images are
- *      exported unoptimized, so ship the file at the size it will be displayed.
- *   2. Add `src` plus the file's true pixel dimensions at the call site, e.g. in
- *      `src/app/about/page.tsx`:
- *        <PhotoSlot
- *          caption="Kelly at the counter"
- *          src="/images/kelly-at-the-counter.jpg"
- *          width={1200}
- *          height={900}
- *        />
- *   3. Nothing else changes: `caption` is already both the visible caption and the alt
- *      text, so each usage keeps describing its own photo.
+ *   - `photo` — a slot from a content document. The owner uploads a picture in the admin
+ *     editor and it appears here on the next build; nothing in the code changes. `imageBase`
+ *     points the `src` somewhere other than the live site's uploads folder (the admin preview
+ *     reads from the auth-gated image endpoint, because the files only land in `public/` at
+ *     build time).
+ *   - `src` plus the file's true pixel `width`/`height` — for a picture committed to
+ *     `public/images/`, already cropped and resized. The export is unoptimized, so a photo
+ *     without its real dimensions would ship unsized and shift the layout.
  */
 
 const ASPECTS = {
@@ -35,37 +33,76 @@ const ASPECTS = {
 export type PhotoSlotAspect = keyof typeof ASPECTS;
 
 interface PhotoSlotBase {
-  /** Describes the photo that belongs here — the visible caption, and the alt text once real. */
-  readonly caption: string;
   /** Shape of the reserved space. Defaults to `4/3`. */
   readonly aspect?: PhotoSlotAspect;
   readonly className?: string;
 }
 
-/**
- * `src` arrives with the file's true pixel dimensions or not at all: the export is
- * unoptimized, so a real photo without them would ship unsized and shift the layout.
- */
-export type PhotoSlotProps = PhotoSlotBase &
-  (
+/** A file committed to `public/`, or nothing yet. `src` always arrives with its dimensions. */
+type PhotoSlotFileProps = PhotoSlotBase & {
+  /** Describes the photo that belongs here — the visible caption, and the alt text once real. */
+  readonly caption: string;
+  readonly photo?: undefined;
+  readonly imageBase?: undefined;
+} & (
     | { readonly src?: undefined; readonly width?: undefined; readonly height?: undefined }
     | { readonly src: string; readonly width: number; readonly height: number }
   );
 
+/** A photo slot owned by a content document — caption and image travel together. */
+type PhotoSlotDocumentProps = PhotoSlotBase & {
+  readonly photo: PhotoContent;
+  /** Where uploaded images are served from. Defaults to the live site's uploads folder. */
+  readonly imageBase?: string;
+  readonly caption?: undefined;
+  readonly src?: undefined;
+  readonly width?: undefined;
+  readonly height?: undefined;
+};
+
+export type PhotoSlotProps = PhotoSlotFileProps | PhotoSlotDocumentProps;
+
+interface ResolvedPhoto {
+  readonly caption: string;
+  readonly image: { readonly src: string; readonly width: number; readonly height: number } | null;
+}
+
+/** Collapses the two prop forms into the one thing the markup needs. */
+function resolvePhoto(props: PhotoSlotProps): ResolvedPhoto {
+  if (props.photo !== undefined) {
+    const image = props.photo.image;
+    return {
+      caption: props.photo.caption,
+      image:
+        image === null
+          ? null
+          : { src: imageSrc(image, props.imageBase), width: image.width, height: image.height },
+    };
+  }
+  return {
+    caption: props.caption,
+    image:
+      props.src === undefined
+        ? null
+        : { src: props.src, width: props.width, height: props.height },
+  };
+}
+
 /** An owner-supplied photograph, or the dashed placeholder holding its space until one arrives. */
 export function PhotoSlot(props: PhotoSlotProps) {
-  const { caption, aspect = '4/3', className = '' } = props;
+  const { aspect = '4/3', className = '' } = props;
+  const { caption, image } = resolvePhoto(props);
 
   return (
     <figure
       className={`w-full transition-transform duration-300 ease-out motion-safe:rotate-1 motion-safe:hover:rotate-0 ${className}`.trim()}
     >
-      {props.src ? (
+      {image ? (
         <Image
-          src={props.src}
+          src={image.src}
           alt={caption}
-          width={props.width}
-          height={props.height}
+          width={image.width}
+          height={image.height}
           className={`w-full rounded-3xl object-cover shadow-card ${ASPECTS[aspect]}`}
         />
       ) : (

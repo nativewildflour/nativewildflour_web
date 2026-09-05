@@ -3,8 +3,6 @@ import { Fraunces, Nunito } from 'next/font/google';
 import type { ReactNode } from 'react';
 
 import { JsonLd } from '@/components/JsonLd';
-import { SiteFooter } from '@/components/SiteFooter';
-import { SiteHeader } from '@/components/SiteHeader';
 import { BUSINESS_NAME } from '@/data/business';
 import { restaurantSchema, webSiteSchema } from '@/lib/schema';
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, TITLE_TEMPLATE } from '@/lib/seo';
@@ -57,18 +55,16 @@ export const viewport: Viewport = {
   colorScheme: 'light',
 };
 
+/**
+ * Document shell only — fonts, global metadata, organization JSON-LD. The page frame lives
+ * one level down: public pages get `SiteChrome` from the `(site)` group layout, admin pages
+ * get `AdminShell`, and the root 404 brings `SiteChrome` itself.
+ */
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
     <html lang="en" className={`${fraunces.variable} ${nunito.variable}`}>
-      <body className="flex min-h-screen flex-col bg-cream text-bark">
-        <a href="#main" className="skip-link">
-          Skip to main content
-        </a>
-        <SiteHeader />
-        <main id="main" className="flex-1">
-          {children}
-        </main>
-        <SiteFooter />
+      <body className="bg-cream text-bark">
+        {children}
         <JsonLd id="schema-organization" data={[restaurantSchema(), webSiteSchema()]} />
       </body>
     </html>

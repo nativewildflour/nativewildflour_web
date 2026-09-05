@@ -3,22 +3,29 @@ import { ChipList } from '@/components/ChipList';
 import { TitleStroke } from '@/components/Decor';
 import { Section } from '@/components/Section';
 import { menuAccent } from '@/components/menu/accents';
-import { MENU_PRICE_NOTE, MENU_SECTIONS } from '@/data/menu';
+import type { HomeContent } from '@/lib/content/home';
+import type { MenuSectionContent } from '@/lib/menu-content';
+import { MENU_PRICE_NOTE } from '@/lib/menu-content';
 
-/** The sections the home page previews — the data marks the rest `highlight: false`. */
-const HIGHLIGHTS = MENU_SECTIONS.filter((section) => section.highlight !== false);
+export interface MenuHighlightsProps {
+  readonly content: HomeContent['highlights'];
+  /** Every menu section; the ones marked `highlight: false` are left out here. */
+  readonly sections: readonly MenuSectionContent[];
+}
 
 /** "Menu highlights" — a short preview of the menu with a link to the full page. */
-export function MenuHighlights() {
+export function MenuHighlights({ content, sections }: MenuHighlightsProps) {
+  const highlights = sections.filter((section) => section.highlight !== false);
+
   return (
     <Section
-      eyebrow="From the counter"
-      title="Menu highlights"
-      lead="Fried, baked and brewed fresh every day. The full list — including cold drinks — is on the menu page."
+      eyebrow={content.eyebrow}
+      title={content.title}
+      lead={content.lead}
       width="6xl"
     >
       <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {HIGHLIGHTS.map((section) => {
+        {highlights.map((section) => {
           const toppings = section.toppings ?? [];
           const featured = toppings.length > 0;
 

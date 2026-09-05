@@ -3,10 +3,10 @@ import type { CSSProperties } from 'react';
 import { ChipList } from '@/components/ChipList';
 import { TitleStroke } from '@/components/Decor';
 import { menuAccent } from '@/components/menu/accents';
-import type { MenuSectionData } from '@/data/menu';
+import type { MenuSectionContent } from '@/lib/menu-content';
 
 export interface MenuSectionProps {
-  readonly section: MenuSectionData;
+  readonly section: MenuSectionContent;
   /** Optional chip list rendered under the items, e.g. the bannock toppings. */
   readonly chips?: readonly string[];
   /** Heading for the chip list. */
@@ -41,9 +41,11 @@ export function MenuSection({ section, chips, chipsLabel, className = '' }: Menu
       ) : null}
 
       <ul className="mt-6">
-        {section.items.map((item) => (
+        {/* Items carry no identity and the list is order-stable within a render, so the index
+            is the key — names can repeat (or be blank mid-edit in the admin preview). */}
+        {section.items.map((item, index) => (
           <li
-            key={item.name}
+            key={index}
             className="border-b border-dotted border-wood/30 py-3 first:pt-0 last:border-b-0 last:pb-0"
           >
             <p className="font-display text-lg font-bold text-bark">{item.name}</p>

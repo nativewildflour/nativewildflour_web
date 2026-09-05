@@ -21,8 +21,9 @@ const COLUMN_HEADING = 'text-sm font-bold tracking-[0.18em] text-sky uppercase';
 
 /** Site footer: a spruce band under its own mountain ridge — address, phone, hours, pages. */
 export function SiteFooter() {
-  // Evaluated once at build time (static export): the © year refreshes with each
-  // seasonal rebuild, not on Jan 1. Accepted tradeoff — no client JS beyond the nav.
+  // Read where the page renders, on the server: the © year is baked into the cached render
+  // and refreshes the next time that page is regenerated, not at midnight on Jan 1. Accepted
+  // tradeoff — no client JS beyond the nav.
   const year = new Date().getFullYear();
 
   return (

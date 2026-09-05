@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "intro": {
+    "eyebrow": "Kelly, Grammy and a family recipe",
+    "title": "Our Story",
+    "lede": "Native WILDFlour is a small, independent cafe on the corner of First Avenue and State Street in Skagway, Alaska. It starts with Kelly, her Grammy, and a passed-down family bannock recipe."
+  },
+  "meetKelly": {
+    "title": "Meet Kelly",
+    "paragraphs": [
+      "Kelly trained at the Culinary Art Institute in Seattle. Today she bakes and fries in Skagway, at a little counter one block west of Broadway, close enough to the water that you can walk over from the docks.",
+      "The bannock is fresh fried and made to order, one piece at a time. Alongside it she bakes cookies and muffins by hand and puts together a savory bannock lunch special that changes daily.",
+      "Nothing here is big or complicated: bread fried to order, baked goods made by hand, and a menu short enough to keep it that way."
+    ],
+    "photo": {
+      "caption": "Kelly at the counter",
+      "image": null
+    }
+  },
+  "grammy": {
+    "title": "Grammy’s kitchen",
+    "paragraphs": [
+      "Ask Kelly where all of this comes from and the answer is her Grammy. Kelly calls her the greatest inspiration in her life.",
+      "Her love, generosity and recipes inspire everything Kelly makes."
+    ],
+    "quote": "filled our hearts and tummies with the smell of fresh baking",
+    "quoteAttribution": "Kelly, on her Grammy"
+  },
+  "recipe": {
+    "title": "The family bannock recipe",
+    "lead": "Handed down through the family, and made to order every time.",
+    "intro": "Every piece is fried to order, so it reaches you hot and golden. Then you choose how to finish it.",
+    "toppingsHeading": "Toppings to choose from",
+    "outro": "The savory lunch specials rotate daily and often sell out, so it is worth coming early. Whatever is on today, it is posted on Facebook."
+  },
+  "whatIsBannock": {
+    "title": "What is bannock?",
+    "paragraphs": [
+      "Bannock is a simple, hearty bread — flour, water, a little fat and leavening — pan-fried or baked until golden. It is a beloved staple across Alaska Native and First Nations communities and throughout the North, and families pass down their own versions.",
+      "Ours is the Alaskan kind: fresh fried bread, made to order, served plain or under a spoonful of something sweet."
+    ]
+  },
+  "madeInSkagway": {
+    "eyebrow": "No chain behind us",
+    "title": "Made in Skagway",
+    "lead": "Small, independent and open for the season.",
+    "cards": [
+      {
+        "title": "One little cafe",
+        "body": "No chain behind us. The person who owns Native WILDFlour is the person doing the baking."
+      },
+      {
+        "title": "Open for the season",
+        "body": "Open for the summer cruise season — seasonal updates are posted on Facebook."
+      },
+      {
+        "title": "Alaska-roasted coffee",
+        "body": "We proudly pour Kaladi Brothers Coffee, roasted in Alaska, alongside hot tea and cold drinks."
+      }
+    ]
+  },
+  "sayHello": {
+    "eyebrow": "Stop by",
+    "title": "Come say hello",
+    "lead": "We are a short walk from the cruise docks, at the south end of downtown Skagway.",
+    "locationNote": "One block west of Broadway."
+  }
+}

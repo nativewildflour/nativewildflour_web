@@ -1,13 +1,14 @@
 import { ButtonLink } from '@/components/ButtonLink';
 import { FACEBOOK_URL } from '@/data/business';
-import { MENU_SPECIALS_NOTE } from '@/data/menu';
 
 export interface SpecialsCalloutProps {
+  /** The menu document's specials note — the one editable sentence in this box. */
+  readonly note: string;
   readonly className?: string;
 }
 
 /** The day's-special note, set like a hand-stamped ticket pointing at Facebook. */
-export function SpecialsCallout({ className = '' }: SpecialsCalloutProps) {
+export function SpecialsCallout({ note, className = '' }: SpecialsCalloutProps) {
   return (
     <aside
       aria-labelledby="todays-special-heading"
@@ -35,7 +36,7 @@ export function SpecialsCallout({ className = '' }: SpecialsCalloutProps) {
           </h2>
           <p className="mt-2 text-bark/80">
             The savory bannock special is different most days.{' '}
-            {MENU_SPECIALS_NOTE}
+            {note}
           </p>
           <ButtonLink href={FACEBOOK_URL} variant="accent" className="mt-5">
             See today’s special on Facebook
