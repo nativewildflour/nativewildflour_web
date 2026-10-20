@@ -53,7 +53,7 @@ export function BannockIntro({ content, imageBase }: BannockIntroProps) {
           {content.paragraphs.map((paragraph, index) => (
             // The drop cap belongs to the opening paragraph only.
             <p
-              key={paragraph}
+              key={index}
               className={
                 index === 0
                   ? 'first-letter:float-left first-letter:mr-2 first-letter:font-display first-letter:text-6xl first-letter:leading-[0.85] first-letter:font-black first-letter:text-wood'
@@ -68,11 +68,11 @@ export function BannockIntro({ content, imageBase }: BannockIntroProps) {
       </div>
 
       <ul className="mt-12 grid gap-6 sm:grid-cols-3">
-        {content.features.map((feature) => {
+        {content.features.map((feature, index) => {
           const { Icon, badge } = FEATURE_ICONS[feature.icon];
           return (
             <li
-              key={feature.title}
+              key={index}
               className="rounded-3xl bg-cream p-6 shadow-card ring-1 ring-bark/10 transition duration-300 ease-out motion-safe:hover:-translate-y-1 hover:shadow-lift"
             >
               <span className={`inline-flex h-12 w-12 items-center justify-center rounded-2xl ${badge}`}>

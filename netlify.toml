@@ -24,6 +24,9 @@
 
 [build.environment]
   NODE_VERSION = "22"
+  # NEXT_PUBLIC_SITE_INDEXABLE is deliberately not set here: unset, every public page is
+  # noindex (the pre-launch default). At launch, set it to "true" for the production context
+  # only; see "Search engine indexing" in README.md.
 
 # The Next.js runtime: turns `.next` into the server handler that renders every page request.
 # Pinned as a devDependency so a deploy cannot pick up a new major on its own.

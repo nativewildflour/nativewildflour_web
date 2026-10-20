@@ -12,8 +12,8 @@ export function AboutMadeInSkagway({ content }: AboutMadeInSkagwayProps) {
   return (
     <Section tone="cream" eyebrow={content.eyebrow} title={content.title} lead={content.lead}>
       <div className="grid gap-6 sm:grid-cols-3">
-        {content.cards.map((card) => (
-          <div key={card.title} className={`bg-snow ${ABOUT_CARD}`}>
+        {content.cards.map((card, index) => (
+          <div key={index} className={`bg-snow ${ABOUT_CARD}`}>
             <h3 className="text-xl font-bold text-bark">{card.title}</h3>
             <p className="mt-3 text-bark/80">{card.body}</p>
           </div>

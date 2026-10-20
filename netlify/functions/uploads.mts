@@ -68,6 +68,19 @@ async function readImage(store: ImageStore, id: string): Promise<ArrayBuffer | n
   }
 }
 
+/** The metadata half of the same read, with the same degrade, for HEAD. */
+async function readMetadata(
+  store: ImageStore,
+  id: string,
+): Promise<{ metadata: Record<string, unknown> } | null> {
+  try {
+    return await store.getMetadata(id, { consistency: 'strong' });
+  } catch (error) {
+    if ((error as { name?: string })?.name !== 'BlobsConsistencyError') throw error;
+    return store.getMetadata(id);
+  }
+}
+
 export default async function uploads(request: Request): Promise<Response> {
   try {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -82,11 +95,7 @@ export default async function uploads(request: Request): Promise<Response> {
       return text(400, 'That is not a photo id.');
     }
 
-    const bytes = await readImage(getStore(IMAGE_STORE), id);
-    if (bytes === null || bytes === undefined) {
-      return text(404, `No photo found for "${id}".`);
-    }
-
+    const store = getStore(IMAGE_STORE);
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
       'Cache-Control': IMMUTABLE,
@@ -96,12 +105,25 @@ export default async function uploads(request: Request): Promise<Response> {
       'Netlify-Cache-Tag': `upload-${id}`,
     };
     if (request.method === 'HEAD') {
-      // Same headers, no body — including the length the GET would have sent, which is only
-      // knowable by reading the blob, so HEAD costs the same read.
+      // Same headers, no body. The upload records the byte count in the blob's metadata, so the
+      // length the GET would send comes from a metadata read rather than the bytes themselves.
+      const entry = await readMetadata(store, id);
+      if (entry === null) {
+        return text(404, `No photo found for "${id}".`);
+      }
+      const bytes = entry.metadata.bytes;
       return new Response(null, {
         status: 200,
-        headers: { ...headers, 'Content-Length': String(bytes.byteLength) },
+        headers:
+          typeof bytes === 'number' && Number.isInteger(bytes) && bytes >= 0
+            ? { ...headers, 'Content-Length': String(bytes) }
+            : headers,
       });
+    }
+
+    const bytes = await readImage(store, id);
+    if (bytes === null || bytes === undefined) {
+      return text(404, `No photo found for "${id}".`);
     }
     return new Response(bytes, { status: 200, headers });
   } catch (error) {

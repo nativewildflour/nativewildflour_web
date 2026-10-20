@@ -13,9 +13,9 @@ export function ChipList({ items, labelledBy, className = '' }: ChipListProps) {
       {...(labelledBy ? { 'aria-labelledby': labelledBy } : {})}
       className={`flex flex-wrap gap-2 ${className}`.trim()}
     >
-      {items.map((item) => (
+      {items.map((item, index) => (
         <li
-          key={item}
+          key={index}
           className="rounded-full bg-snow px-3.5 py-1.5 text-sm font-semibold whitespace-nowrap text-bark shadow-press ring-1 ring-wood/25"
         >
           {item}

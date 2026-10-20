@@ -45,7 +45,7 @@ export const UPLOADS_BASE = '/images/uploads';
 /**
  * The `src` for a stored image. `base` exists for the admin preview, which points at the
  * auth-gated `/admin/api/images` endpoint instead, so everything the editor loads stays inside
- * the signed-in section and uncached.
+ * the signed-in section (cached privately in that browser only).
  */
 export function imageSrc(image: ImageRef, base: string = UPLOADS_BASE): string {
   return `${base}/${image.id}`;

@@ -13,8 +13,10 @@ export interface FaqProps {
 export function Faq({ items, className = '' }: FaqProps) {
   return (
     <div className={`faq divide-y divide-dotted divide-wood/30 rounded-3xl bg-snow px-5 shadow-card ring-1 ring-bark/10 sm:px-7 ${className}`.trim()}>
-      {items.map((item) => (
-        <details key={item.question} className="group py-4">
+      {/* Keyed by position: the questions are owner content and can repeat (or be blank
+          mid-edit in the admin preview). */}
+      {items.map((item, index) => (
+        <details key={index} className="group py-4">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-bold text-bark transition-colors duration-200 marker:content-none hover:text-blueberry">
             <span>{item.question}</span>
             <span

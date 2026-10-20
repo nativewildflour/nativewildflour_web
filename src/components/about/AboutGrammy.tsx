@@ -13,8 +13,8 @@ export function AboutGrammy({ content }: AboutGrammyProps) {
     <Section tone="cream" title={content.title}>
       <div className="grid gap-8 md:grid-cols-5 md:items-center">
         <div className="space-y-4 text-bark/85 md:col-span-3">
-          {content.paragraphs.map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
+          {content.paragraphs.map((paragraph, index) => (
+            <p key={index}>{paragraph}</p>
           ))}
         </div>
         <figure className={`bg-parchment md:col-span-2 ${ABOUT_CARD}`}>

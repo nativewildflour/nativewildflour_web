@@ -9,7 +9,7 @@
  * belong to the menu document and are edited there.
  */
 
-import { DEFAULT_MENU } from '@/components/admin/default-menu';
+import { DEFAULT_MENU } from '@/lib/default-menu';
 import { PREVIEW_IMAGE_BASE } from '@/components/admin/previews/PreviewFrame';
 import { AboutGrammy } from '@/components/about/AboutGrammy';
 import { AboutIntro } from '@/components/about/AboutIntro';

@@ -1,7 +1,13 @@
 import type { Metadata } from 'next';
 
 import { BUSINESS_NAME } from '@/data/business';
-import { OG_IMAGE_HEIGHT, OG_IMAGE_URL, OG_IMAGE_WIDTH, absoluteUrl } from '@/lib/site';
+import {
+  OG_IMAGE_HEIGHT,
+  OG_IMAGE_URL,
+  OG_IMAGE_WIDTH,
+  SITE_INDEXABLE,
+  absoluteUrl,
+} from '@/lib/site';
 
 export const SITE_NAME = BUSINESS_NAME;
 
@@ -33,6 +39,25 @@ export interface BuildMetadataOptions {
   /** Set on the home page, whose title already ends with the business name. */
   readonly absoluteTitle?: boolean;
 }
+
+/**
+ * Robots directives for the public pages. Until launch (`SITE_INDEXABLE` off) the pages still
+ * declare their canonical URLs — self-referencing canonicals sit fine beside `noindex`, and
+ * flipping the switch then changes this tag and nothing else.
+ */
+const PAGE_ROBOTS: Metadata['robots'] = SITE_INDEXABLE
+  ? {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        'max-image-preview': 'large',
+        'max-snippet': -1,
+        'max-video-preview': -1,
+      },
+    }
+  : { index: false, follow: false };
 
 /**
  * Builds the per-page `metadata` export: canonical, Open Graph, Twitter and robots.
@@ -73,16 +98,6 @@ export function buildMetadata({
       description,
       images: [{ url: OG_IMAGE_URL, alt: OG_IMAGE_ALT }],
     },
-    robots: {
-      index: true,
-      follow: true,
-      googleBot: {
-        index: true,
-        follow: true,
-        'max-image-preview': 'large',
-        'max-snippet': -1,
-        'max-video-preview': -1,
-      },
-    },
+    robots: PAGE_ROBOTS,
   };
 }

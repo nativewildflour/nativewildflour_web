@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-import { absoluteUrl } from '@/lib/site';
+import { SITE_INDEXABLE, absoluteUrl } from '@/lib/site';
 
 export const dynamic = 'force-static';
 
@@ -15,7 +15,11 @@ export default function robots(): MetadataRoute.Robots {
     // `/admin` is Basic-auth gated and served with noindex headers and meta tags already;
     // disallowing it here (both spellings, with and without the trailing slash) keeps
     // crawlers from requesting those URLs at all.
+    //
+    // The public pages stay crawlable even before launch (`SITE_INDEXABLE` off): their
+    // `noindex` lives in the page, and a crawler blocked here would never read it — a
+    // disallowed URL can still be listed from links alone. Only the sitemap is withheld.
     rules: [{ userAgent: '*', allow: '/', disallow: ['/admin', '/admin/', '/*.txt$'] }],
-    sitemap: absoluteUrl('/sitemap.xml'),
+    ...(SITE_INDEXABLE ? { sitemap: absoluteUrl('/sitemap.xml') } : {}),
   };
 }

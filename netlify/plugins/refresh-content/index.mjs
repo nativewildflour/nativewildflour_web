@@ -9,7 +9,7 @@
  * a deploy sees those defaults until the pages' 60-second `revalidate` window turns over.
  *
  * So: one POST to the freshly deployed site's `/admin/api/revalidate`, which invalidates the
- * four public routes; the next render reads the store. This runs in `onSuccess` — after the
+ * four public routes and the sitemap; the next render reads the store. This runs in `onSuccess` — after the
  * deploy is live, which is the earliest moment the new URL can answer.
  *
  * It never fails the build. A refresh that does not happen costs at most 60 seconds of stale
@@ -18,12 +18,18 @@
  * (`../../functions/admin-content.mts`), which is likewise best-effort.
  */
 
-const ROUTE = '/admin/api/revalidate';
+/** With the trailing slash `trailingSlash: true` gives every route — the slash-less spelling is a 308. */
+const ROUTE = '/admin/api/revalidate/';
 
 export async function onSuccess({ utils }) {
-  // DEPLOY_PRIME_URL addresses the deploy that just went live (branch and preview deploys
-  // included); URL is the production address, and the fallback for a context that sets neither.
-  const origin = process.env.DEPLOY_PRIME_URL || process.env.URL;
+  // In production, URL is the primary domain; DEPLOY_PRIME_URL is the `*.netlify.app` address,
+  // which Netlify redirects to the primary domain once one is set — and a cross-origin redirect
+  // drops the Authorization header. Branch and preview deploys have no primary domain, so there
+  // DEPLOY_PRIME_URL is the deploy that just went live. (Same rule as the content function.)
+  const origin =
+    process.env.CONTEXT === 'production'
+      ? process.env.URL || process.env.DEPLOY_PRIME_URL
+      : process.env.DEPLOY_PRIME_URL || process.env.URL;
   const username = process.env.ADMIN_USERNAME ?? '';
   const password = process.env.ADMIN_PASSWORD ?? '';
 

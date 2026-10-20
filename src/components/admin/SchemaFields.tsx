@@ -37,7 +37,7 @@ import type {
   ParagraphsFieldSpec,
   StringsFieldSpec,
 } from '@/lib/content-schema';
-import { emptyFields } from '@/lib/content-schema';
+import { emptyFields, itemTitle } from '@/lib/content-schema';
 import type { PhotoContent } from '@/lib/content/images';
 import { isBlank, isPlainObject, slugify } from '@/lib/copy-rules';
 
@@ -103,14 +103,6 @@ function stringsOf(value: unknown): string[] {
 
 function itemsOf(value: unknown): readonly unknown[] {
   return Array.isArray(value) ? (value as readonly unknown[]) : [];
-}
-
-/** The name an item goes by in the editor, in announcements and in a delete confirmation. */
-function itemTitle(item: unknown, field: ListFieldSpec, index: number): string {
-  const fallback = `${field.itemLabel} ${index + 1}`;
-  if (field.titleField === undefined || !isPlainObject(item)) return fallback;
-  const title = item[field.titleField];
-  return typeof title === 'string' && !isBlank(title) ? title : fallback;
 }
 
 /**
@@ -450,14 +442,12 @@ function ListField({
             const title = itemTitle(item, field, index);
             const record = isPlainObject(item) ? item : {};
             return (
-              // Keyed by the slug where there is one, so per-item state follows the item
-              // rather than the position; by position otherwise, as the menu items do.
+              // Keyed by position, as the menu items are. The slug would be the natural key,
+              // but it is an editable field of the item: keying on it remounts the row (and
+              // drops focus) on every keystroke in the id box, and two rows collide while one
+              // is being retyped. Focus after a move is restored by id, not by React.
               <li
-                key={
-                  slugField !== undefined && typeof record[slugField] === 'string'
-                    ? `${record[slugField]}`
-                    : index
-                }
+                key={index}
                 id={`field-${path}[${index}]`}
                 tabIndex={-1}
                 className="rounded-2xl bg-snow p-4 shadow-card ring-1 ring-bark/10"
@@ -714,6 +704,14 @@ export interface SchemaFieldsProps<T> {
   readonly announce: (text: string) => void;
   readonly requestConfirm: (request: ConfirmRequest) => void;
   readonly closeConfirm: () => void;
+  /**
+   * Set when `document` is one part of a larger document — the menu's `page` wording. Every
+   * path (and so every `field-<path>` id) is prefixed with it, keeping the ids in step with
+   * the validator's labels for that part.
+   */
+  readonly basePath?: string;
+  /** Names the fields for assistive tech. */
+  readonly legend?: string;
 }
 
 export function SchemaFields<T extends object>({
@@ -724,6 +722,8 @@ export function SchemaFields<T extends object>({
   announce,
   requestConfirm,
   closeConfirm,
+  basePath,
+  legend = 'The words on this page',
 }: SchemaFieldsProps<T>) {
   // The walk is driven by the spec, not by the document's type: the two casts here are the
   // one place the typed document meets the untyped tree, and `parse` upstream is what
@@ -733,11 +733,11 @@ export function SchemaFields<T extends object>({
 
   return (
     <fieldset disabled={readOnly} className="min-w-0 space-y-6">
-      <legend className="sr-only">The words on this page</legend>
+      <legend className="sr-only">{legend}</legend>
       {Object.entries(spec.fields).map(([key, field]) => (
         <FieldNode
           key={key}
-          path={key}
+          path={basePath === undefined ? key : `${basePath}.${key}`}
           field={field}
           value={record[key]}
           depth={0}

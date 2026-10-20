@@ -60,6 +60,16 @@ const VERSION_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MAX_VERSIONS = 20;
 /** A document larger than this (in JSON characters) is refused with a 413. */
 const MAX_RECORD_LENGTH = 300_000;
+/**
+ * The site's refresh endpoint, with the trailing slash `trailingSlash: true` gives every route:
+ * the slash-less spelling only works via a 308 that undici follows, and `scripts/smoke-admin.mjs`
+ * pins this exact URL.
+ */
+const REFRESH_ROUTE = '/admin/api/revalidate/';
+/** How long the refresh call may take before the save answers without it. */
+const REFRESH_TIMEOUT_MS = 5_000;
+/** Set after the first save that had to go without the etag guard; see `publish`. */
+let warnedNoEtag = false;
 
 /**
  * The committed defaults (`src/data/defaults/`), served before the owner's first save on a
@@ -126,8 +136,8 @@ function propertyOf(body: unknown, name: string): unknown {
  *
  * v1 POSTed a build hook and the owner waited ~2 minutes for a deploy. The pages now read the
  * store at request time and cache the result, so a save only has to invalidate that cache:
- * `/admin/api/revalidate` calls `revalidatePath` for the four public routes and the next visitor
- * gets the new copy. Failure is non-fatal — the document is already saved, and each page's
+ * `/admin/api/revalidate` calls `revalidatePath` for the four public routes and the sitemap, and
+ * the next visitor gets the new copy. Failure is non-fatal — the document is already saved, and each page's
  * 60-second `revalidate` window picks the change up on its own shortly after.
  *
  * The caller's own `Authorization` header is forwarded rather than credentials being rebuilt
@@ -137,20 +147,38 @@ function propertyOf(body: unknown, name: string): unknown {
  * points `URL` at a recording server after this module is imported.
  */
 async function refreshSite(authorization: string | null): Promise<boolean> {
-  // DEPLOY_PRIME_URL is the deploy actually serving this request (branch or preview deploys
-  // included); URL is the production address. Neither is set locally, where there is no site to
-  // refresh — `next dev` reads the same store directly.
-  const origin = process.env.DEPLOY_PRIME_URL || process.env.URL;
+  const origin = siteOrigin();
   if (!origin || authorization === null) return false;
   try {
-    const response = await fetch(new URL('/admin/api/revalidate', origin), {
+    const response = await fetch(new URL(REFRESH_ROUTE, origin), {
       method: 'POST',
       headers: { authorization },
+      // Bounded: this runs inside a synchronous function that has already done its writes, and
+      // a cold or stalled Next runtime must not turn a landed save into a timeout the editor
+      // reports as "publishing failed". A timeout lands in the catch → `revalidated: false`.
+      signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
     });
     return response.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Where the site answering this deploy lives.
+ *
+ * In production that is `URL` — the primary domain once one is set. `DEPLOY_PRIME_URL` is the
+ * `*.netlify.app` address of the deploy, which Netlify redirects to the primary domain, and a
+ * cross-origin redirect strips `Authorization` (and turns a POST into a GET), so the refresh
+ * would land as a 401. Branch and preview deploys have no primary domain: there
+ * `DEPLOY_PRIME_URL` is the deploy actually serving this request. Neither is set locally, where
+ * there is no site to refresh — `next dev` reads the same store directly.
+ */
+function siteOrigin(): string | undefined {
+  const production = process.env.CONTEXT === 'production';
+  return production
+    ? process.env.URL || process.env.DEPLOY_PRIME_URL
+    : process.env.DEPLOY_PRIME_URL || process.env.URL;
 }
 
 /** The slice of `store.list()` results this API reads. Spelled out so the file type-checks
@@ -211,6 +239,10 @@ async function publish(
 
   const current = await store.getWithMetadata(currentKey(doc), { type: 'text' });
   let modified: boolean;
+  // Set once the version being replaced has been snapshotted, so a save that then loses the
+  // race can take its snapshot back out: otherwise the loser leaves an orphan copy of the
+  // pre-save document in the history, timestamped newer than the save that actually landed.
+  let snapshotKey: string | null = null;
   if (current !== null) {
     // A blob with nothing in it is not a version worth keeping — restoring it would only
     // put an empty page back — so the snapshot is skipped; the conditional write below still
@@ -218,21 +250,33 @@ async function publish(
     if (hasContent(current.data)) {
       // `onlyIfNew` keeps a racing publish from clobbering a snapshot written the same
       // millisecond; losing that race is fine, so the result is ignored.
-      await store.set(`${versionPrefix(doc)}${updatedAt}${VERSION_SUFFIX}`, current.data, {
-        onlyIfNew: true,
-      });
-      await pruneVersions(store, doc);
+      snapshotKey = `${versionPrefix(doc)}${updatedAt}${VERSION_SUFFIX}`;
+      await store.set(snapshotKey, current.data, { onlyIfNew: true });
+    }
+    if (current.etag === undefined && !warnedNoEtag) {
+      // The guard needs the etag the read came with. Netlify's API always sends one; the local
+      // blob server (`netlify dev`, `dev:admin`, the smoke harness) never does, and the client
+      // silently drops an undefined `onlyIfMatch`, so say so (once per process) rather than
+      // pretend the write below is conditional.
+      warnedNoEtag = true;
+      console.warn(
+        `[admin-content] the store returned no etag for ${currentKey(doc)} — saving without the concurrent-save guard (expected on the local blob server only).`,
+      );
     }
     ({ modified } = await store.setJSON(currentKey(doc), record, { onlyIfMatch: current.etag }));
   } else {
     ({ modified } = await store.setJSON(currentKey(doc), record, { onlyIfNew: true }));
   }
   if (!modified) {
+    if (snapshotKey !== null) await store.delete(snapshotKey);
     return failure(
       409,
       'This page changed while you were saving — reload the page and try again.',
     );
   }
+  // Prune only for a save that landed: pruning first could drop the oldest real version to
+  // make room for a snapshot that then had to be taken back.
+  if (snapshotKey !== null) await pruneVersions(store, doc);
 
   const revalidated = await refreshSite(authorization);
   return json(200, { ok: true, updatedAt, revalidated });

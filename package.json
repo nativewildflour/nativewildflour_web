@@ -16,7 +16,7 @@
     "dev:admin": "node --experimental-strip-types scripts/dev-admin.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
   },
   "dependencies": {
     "@netlify/blobs": "^11.0.2",

@@ -91,8 +91,10 @@ npm run verify
 each page has exactly one `<h1>`, a title, a meta description, an absolute canonical URL, Open
 Graph and Twitter tags; that all JSON-LD parses and the business listing carries the right phone
 number and opening hours; that the sitemap lists exactly the four public pages and the admin pages
-stay out of it (noindex, no canonical); that every route the app exports is registered with the
-checker; and that no banned wording, malformed phone number or unresolved template placeholder
+stay out of it (noindex, no canonical); that the public pages' robots tags and `robots.txt` match
+the [indexing switch](#search-engine-indexing-off-until-launch); that every route the app exports
+is registered with the checker; and that no banned wording, malformed phone number or unresolved
+template placeholder
 reached the output or the JavaScript bundles. Because the build has no blob store, what it checks
 is the default content; the owner's content is checked by the same rules at publish time. The
 banned-wording list itself lives in `src/data/content-rules.json`, which also feeds the admin
@@ -152,6 +154,33 @@ No file needs to change. To preview the effect locally:
 NEXT_PUBLIC_SITE_URL=https://nativewildflour.com npm run build
 ```
 
+### Search engine indexing (off until launch)
+
+Until the owner approves the site, it must not show up in search results as the cafe's own (see
+`PRODUCT.md`). One build-time variable, read in `src/lib/site.ts`, controls that:
+
+| `NEXT_PUBLIC_SITE_INDEXABLE` | Public pages | `robots.txt` |
+|---|---|---|
+| unset, or anything but `true` (the default) | `noindex, nofollow` | allows crawling, no `Sitemap:` line |
+| `true` | `index, follow` | allows crawling, advertises `/sitemap.xml` |
+
+Crawling stays allowed in both modes on purpose: a search engine can only obey a page's `noindex`
+if it is allowed to fetch the page. Canonical URLs, Open Graph tags and the JSON-LD are identical in
+both modes, so switching changes nothing else.
+
+**At launch**, once the final domain is set: add `NEXT_PUBLIC_SITE_INDEXABLE` = `true` under
+**Netlify → Site configuration → Environment variables**, scoped to the **Production** deploy
+context only, then redeploy. The value is baked in at build time, so a change always needs a
+redeploy. `npm run verify` reads the same variable, fails when the build's output disagrees with
+it, and says which mode it checked on its last lines. To check the launch build locally:
+
+```bash
+NEXT_PUBLIC_SITE_INDEXABLE=true npm run build && NEXT_PUBLIC_SITE_INDEXABLE=true npm run verify
+```
+
+Before launch, the safest places to show the site are a draft deploy (`netlify deploy --build`
+without `--prod`) or a Deploy Preview: Netlify adds its own `X-Robots-Tag: noindex` header to both.
+
 ---
 
 ## Where to change the content
@@ -186,8 +215,9 @@ checks — is declared once in `src/lib/content/{home,about,directions}.ts`. Add
 it a default value in the JSON, and render it in the component; the editor draws the control from
 the same declaration. **Make new fields optional, or fill them from the default before parsing:**
 a document the owner saved before the field existed will not have it, and a required field that
-is missing makes the stored document unreadable — the page keeps serving its last good render, but
-the editor will refuse to open it.
+is missing makes the stored document unreadable — the editor refuses to open it, and because the
+deploy's own post-build refresh re-renders every page on demand, the public page becomes an error
+page rather than its last good render.
 
 ### Hours
 
@@ -251,15 +281,17 @@ from the sitemap.
 Each editor is the same tool pointed at a different document: live checks as you type, a preview
 of the real page beside the fields, undo/redo, a draft kept on the device until it is published,
 version history with restore, and a Publish button that only lights up when every check passes.
-The menu editor has hand-built controls for sections, items and topping chips; the three page
-editors draw their fields from the page's field declaration in `src/lib/content/`.
+The menu editor has hand-built controls for sections, items and topping chips, and it also edits
+the words around the menu on `/menu/`; its "Good to know" notes use the same list controls as
+the page editors. The three page editors draw their fields from the page's field declaration in
+`src/lib/content/`.
 
 What each editor covers, and what stays fixed:
 
 | Editor | Editable | Fixed (comes from `src/data/business.ts`) |
 |---|---|---|
 | Home page | Headline and highlighted word, opening paragraph, the bannock explainer and its photo, the three feature cards, the menu-highlights heading, the visit-us notes, the customer quote, the Meet Kelly teaser, the Facebook panel | Motto, hours pill, address, phone, map links, the menu cards themselves |
-| Menu | Intro, specials note, sections, items, descriptions, topping chips, which sections the home page highlights | The "prices are posted at the counter" line |
+| Menu | The line above the Menu heading, intro, the specials box heading and wording, the heading over the sections, sections, items, descriptions, topping chips, which sections the home page highlights, the "Good to know" heading and notes | The "Menu" page heading, the Facebook button, the "prices are posted at the counter" line and the "Prices at the counter" card |
 | About page | Every section's heading and paragraphs, Kelly's photo, Grammy's quote, the three "Made in Skagway" cards, the come-say-hello notes | Toppings list (from the menu), motto banner, address, phone, Facebook link, hours table |
 | Directions page | Headline and intro, orientation notes and the storefront photo, the dock-by-dock walks, the shuttle card, arrival notes, tips, the FAQ | Address block, phone, hours, season note, the map and its links |
 
@@ -271,9 +303,10 @@ saved. Until then the default under `src/data/defaults/` is what loads everywher
 render it, and the editor opens on it and says so ("editing the current home page"). "Nothing
 saved" covers a missing blob and an empty one alike, page by page: publishing the menu never
 changes what the other pages fall back to. A blob that holds content but cannot be read —
-malformed JSON, the wrong shape — is treated differently on purpose: the page keeps serving its
-last good render and the loader logs the reason instead of quietly reverting the owner's edits,
-and the editor points at version history.
+malformed JSON, the wrong shape — is treated differently on purpose: the loader throws with the
+reason instead of quietly reverting the owner's edits, and the editor points at version history.
+A render on the 60-second timer keeps the last good page up; a render forced by a publish or a
+deploy is blocking, so there it is an error page until the blob is repaired.
 
 1. The owner edits and clicks **Publish**. The editor validates as they type — blanks, wording the
    content rules ban, wrong brand casing, price-like strings, a wrong phone number, hours that
@@ -282,7 +315,8 @@ and the editor points at version history.
 2. The Netlify Function (`netlify/functions/admin-content.mts`) validates again, snapshots the
    previous version, writes the blob, and asks the site to refresh by calling
    `/admin/api/revalidate` with the same sign-in.
-3. That route handler marks the four public pages for regeneration. The next visitor to each page
+3. That route handler marks the four public pages for regeneration, along with the sitemap, whose
+   "last modified" dates come from each document's publish time. The next visitor to each page
    gets it rendered fresh from the blob store, and Netlify caches that render until the next
    publish. **Changes are live as soon as the next page load** — no build, no deploy. As a safety
    net every page also refreshes itself at most once a minute, so even a lost refresh call

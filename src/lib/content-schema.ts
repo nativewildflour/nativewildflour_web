@@ -401,6 +401,32 @@ function copyFields(
 }
 
 /**
+ * The structural walk of one described field, for a document that is not itself spec-driven
+ * but carries a spec-described part — the menu's page wording. Same checks, same messages,
+ * same path labels as a field inside a spec document.
+ */
+export function fieldStructureIssues(value: unknown, path: string, field: FieldSpec): CopyIssue[] {
+  const issues: CopyIssue[] = [];
+  structuralField(value, path, field, issues);
+  return issues;
+}
+
+/**
+ * The copy walk of one described field — the companion to `fieldStructureIssues`. Run it only
+ * on a value that passed the structural walk.
+ */
+export function fieldCopyIssues(
+  value: unknown,
+  path: string,
+  field: FieldSpec,
+  rules: RuleChecks | null,
+): CopyIssue[] {
+  const issues: CopyIssue[] = [];
+  copyField(value, path, field, issues, rules);
+  return issues;
+}
+
+/**
  * Structural validation only — the build-time entry point, mirroring `parseMenuContent`. A
  * document that survives this can render; whether its *copy* is publishable is a separate
  * question the publish endpoint answers.
@@ -464,7 +490,11 @@ function parsePath(path: string): PathSegment[] | null {
   return consumed === path.length && segments.length > 0 ? segments : null;
 }
 
-function itemTitle(item: unknown, field: ListFieldSpec, index: number): string {
+/**
+ * The name an item goes by — in issue paths here, and in the editor's headings, announcements
+ * and delete confirmations, so the two always agree.
+ */
+export function itemTitle(item: unknown, field: ListFieldSpec, index: number): string {
   const fallback = `${field.itemLabel} ${index + 1}`;
   if (field.titleField === undefined || !isPlainObject(item)) return fallback;
   const title = item[field.titleField];

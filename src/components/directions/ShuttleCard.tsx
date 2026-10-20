@@ -24,8 +24,8 @@ export function ShuttleCard({ shuttle, className = '' }: ShuttleCardProps) {
       <p className="mt-4 text-bark/85">{shuttle.description}</p>
 
       <ul className="mt-4 space-y-2">
-        {shuttle.notes.map((note) => (
-          <li key={note} className="flex gap-3 text-bark/85">
+        {shuttle.notes.map((note, index) => (
+          <li key={index} className="flex gap-3 text-bark/85">
             <span aria-hidden="true" className="mt-2.5 size-1.5 shrink-0 rounded-full bg-blueberry" />
             <span>{note}</span>
           </li>

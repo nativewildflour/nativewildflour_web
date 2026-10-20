@@ -447,6 +447,37 @@ await scenario('content: copy that breaks a rule is refused with the offending p
 });
 
 /**
+ * The menu is bespoke, but its `page` wording is walked by the field-spec engine: these pin that
+ * the walk is actually wired into the menu validator the publish endpoint runs — copy rules on
+ * a nested list entry, and the structural check on a value the page has no drawing for.
+ */
+await scenario('content: menu page wording that breaks a rule is refused with its path', async () => {
+  const document = structuredClone(MENU_SEED);
+  document.page.goodToKnow.notes[0].body = `${document.page.goodToKnow.notes[0].body} ${BANNED_WORD}`;
+  const payload = await expectJson(
+    await content('PUT', '/admin/api/content/menu', { body: { document } }),
+    400,
+  );
+  assert.ok(
+    payload.issues.some((issue) => issue.path === 'page.goodToKnow.notes[0].body'),
+    `expected an issue on page.goodToKnow.notes[0].body, got ${JSON.stringify(payload.issues)}`,
+  );
+});
+
+await scenario('content: a menu note icon the page cannot draw is refused', async () => {
+  const document = structuredClone(MENU_SEED);
+  document.page.goodToKnow.notes[0].icon = 'rocket';
+  const payload = await expectJson(
+    await content('PUT', '/admin/api/content/menu', { body: { document } }),
+    400,
+  );
+  assert.ok(
+    payload.issues.some((issue) => issue.path === 'page.goodToKnow.notes[0].icon'),
+    `expected an issue on page.goodToKnow.notes[0].icon, got ${JSON.stringify(payload.issues)}`,
+  );
+});
+
+/**
  * Gate-validator parity, the failure CLAUDE.md warns about loudest: a rule the acceptance gate
  * enforces on rendered copy but the publish validator does not check would let the owner save
  * cleanly and then wedge *every* deploy after it, because the blob feeds the bad copy into each
@@ -537,6 +568,32 @@ await scenario('content: restore brings the previous copy back', async () => {
   assert.equal(restored.document.hero.lede, FIRST_LEDE);
 });
 
+await scenario('content: a menu snapshot from before the page wording restores', async () => {
+  // Restore re-validates the snapshot against today's validator, so a version saved before the
+  // `page` block existed must still pass — the other half of keeping that block optional.
+  const older = structuredClone(MENU_SEED);
+  delete older.page;
+  older.intro = `${older.intro} Saved before the page wording.`;
+  await expectJson(await content('PUT', '/admin/api/content/menu', { body: { document: older } }), 200);
+
+  const newer = structuredClone(MENU_SEED);
+  newer.page.sectionsTitle = 'On the menu today';
+  await expectJson(await content('PUT', '/admin/api/content/menu', { body: { document: newer } }), 200);
+
+  const { versions } = await expectJson(
+    await content('GET', '/admin/api/content/menu/versions'),
+    200,
+  );
+  await expectJson(
+    await content('POST', '/admin/api/content/menu/restore', { body: { key: versions[0].key } }),
+    200,
+  );
+
+  const restored = await expectJson(await content('GET', '/admin/api/content/menu'), 200);
+  assert.equal(restored.document.intro, older.intro);
+  assert.equal(restored.document.page, undefined);
+});
+
 await scenario('content: restore refuses a key outside this page history', async () => {
   const foreign = await expectJson(
     await content('POST', '/admin/api/content/home/restore', {
@@ -583,7 +640,7 @@ await scenario('content: a publish asks the site to refresh', async () => {
     assert.equal(payload.revalidated, true);
     assert.deepEqual(
       site.requests,
-      [{ method: 'POST', url: '/admin/api/revalidate', authorization: AUTH }],
+      [{ method: 'POST', url: '/admin/api/revalidate/', authorization: AUTH }],
       'the publish should make exactly one refresh call, carrying the caller’s credentials',
     );
   } finally {
@@ -789,6 +846,19 @@ await scenario('loader: a published document is what the pages render', async ()
   const loaded = await getContent('home');
   assert.equal(loaded.source, 'blob');
   assert.equal(loaded.document.hero.lede, LOADED_LEDE);
+});
+
+await scenario('loader: a menu saved before the page wording existed still publishes and loads', async () => {
+  // The `page` block is optional precisely so these keep working: a spec change must never
+  // turn a menu the owner already published into a page that fails to render.
+  const document = structuredClone(MENU_SEED);
+  delete document.page;
+  await expectJson(await content('PUT', '/admin/api/content/menu', { body: { document } }), 200);
+
+  const loaded = await getContent('menu');
+  assert.equal(loaded.source, 'blob');
+  assert.equal(loaded.document.page, undefined);
+  assert.deepEqual(loaded.document.sections, MENU_SEED.sections);
 });
 
 await scenario('loader: with no Blobs context the pages render the defaults', async () => {

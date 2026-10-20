@@ -14,8 +14,8 @@ export function AboutMeetKelly({ content, imageBase }: AboutMeetKellyProps) {
     <Section tone="snow" title={content.title}>
       <div className="grid gap-10 md:grid-cols-5 md:items-start">
         <div className="space-y-4 text-bark/85 md:col-span-3">
-          {content.paragraphs.map((paragraph) => (
-            <p key={paragraph}>{paragraph}</p>
+          {content.paragraphs.map((paragraph, index) => (
+            <p key={index}>{paragraph}</p>
           ))}
         </div>
         <PhotoSlot photo={content.photo} imageBase={imageBase} className="md:col-span-2" />

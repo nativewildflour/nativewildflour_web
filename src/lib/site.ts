@@ -26,6 +26,21 @@ function resolveSiteUrl(): string {
 
 export const SITE_URL = resolveSiteUrl();
 
+/**
+ * Whether search engines may index the site: on only when `NEXT_PUBLIC_SITE_INDEXABLE` is
+ * exactly `true`. Off, every public page carries `noindex, nofollow` and robots.txt stops
+ * advertising the sitemap — the site is a pitch that must not be listed as the cafe's own until
+ * the owner approves it (PRODUCT.md). Failing closed means a deploy nobody configured stays out
+ * of search results; set it for the production context only, at launch.
+ *
+ * `NEXT_PUBLIC_` for its build-time inlining, not for the browser (nothing client-side reads
+ * it): the build prerenders the pages and robots.txt, then ISR re-renders the pages at request
+ * time, and an inlined value is the only kind both are guaranteed to agree on. Changing it
+ * therefore takes a redeploy. `scripts/verify-build.mjs` reads the same variable and fails a
+ * build whose output disagrees with it.
+ */
+export const SITE_INDEXABLE = process.env.NEXT_PUBLIC_SITE_INDEXABLE?.trim() === 'true';
+
 /** Absolute URL for a site-relative path (`/menu/` -> `https://…/menu/`). */
 export function absoluteUrl(path: string): string {
   return `${SITE_URL}${path.startsWith('/') ? path : `/${path}`}`;

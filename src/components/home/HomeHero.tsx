@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 
 import { ButtonLink } from '@/components/ButtonLink';
 import { Container } from '@/components/Container';
-import { FireweedSprig, RidgeDivider } from '@/components/Decor';
+import { FireweedSprig } from '@/components/Decor';
 import { ClockIcon } from '@/components/home/HomeIcons';
+import { TaiyaInletScene } from '@/components/home/TaiyaInletScene';
 import { BUSINESS_NAME, HOURS_SHORT, MOTTO } from '@/data/business';
 import type { HomeContent } from '@/lib/content/home';
 
@@ -30,14 +31,19 @@ function accentedHeading(heading: string, accentWord: string): ReactNode {
 }
 
 /**
- * Home hero: a Skagway scene — sky wash, a low sun, mountain ridges along the
- * bottom — with the logo badge, the page `<h1>`, lede, calls to action and the
- * hours tag. Every moving part is CSS; the entrance collapses under
+ * Home hero: Skagway's own view — sky wash, a low sun, and Taiya Inlet under the Coast
+ * Mountains along the bottom — with the logo badge, the page `<h1>`, lede, calls to action
+ * and the hours tag. Every moving part is CSS; the entrance collapses under
  * `prefers-reduced-motion`.
+ *
+ * The scene's dark layers (water, spruce) stay inside the bottom padding, below all the copy;
+ * only the pale far peaks rise behind the solid-backed buttons and hours tag, so the text never
+ * sits on a mid-tone. Its white shore is the next section's snow, which is why the hero has no
+ * bottom border.
  */
 export function HomeHero({ hero }: HomeHeroProps) {
   return (
-    <section className="relative overflow-hidden border-b border-bark/10">
+    <section className="relative overflow-hidden">
       {/* Sky wash. */}
       <div
         aria-hidden="true"
@@ -48,14 +54,14 @@ export function HomeHero({ hero }: HomeHeroProps) {
         aria-hidden="true"
         className="absolute -top-28 right-[6%] size-80 rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--color-wheat)_50%,transparent),transparent_65%)] sm:size-[26rem]"
       />
-      {/* The ridge line the town sits under. */}
-      <RidgeDivider className="absolute bottom-0 left-0 h-14 text-spruce/20 sm:h-20" />
+      {/* Short on phones, so the narrow crop still reaches the glacier left of the badge. */}
+      <TaiyaInletScene className="absolute inset-x-0 bottom-0 h-48 w-full sm:h-72 lg:h-80" />
 
       <Container width="6xl" className="relative">
         {/* Text is DOM-first so the h1 leads for screen readers and on small screens,
             where the message must own the first viewport; md+ places the logo badge
             back into the left column via explicit grid placement. */}
-        <div className="grid items-center gap-10 py-16 sm:py-24 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14">
+        <div className="grid items-center gap-10 pt-16 pb-28 sm:pt-24 sm:pb-36 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14 lg:pb-44">
           <div className="md:col-start-2 md:row-start-1">
             <p className="rise flex items-center gap-2 font-display text-base font-bold tracking-wide text-wood">
               <FireweedSprig bloom className="h-7 w-5 shrink-0" />
@@ -63,7 +69,9 @@ export function HomeHero({ hero }: HomeHeroProps) {
             </p>
 
             <h1 className="rise rise-2 mt-4 text-4xl font-black text-bark sm:text-6xl lg:text-[4.25rem] lg:leading-[1.05]">
-              {accentedHeading(hero.heading, hero.accentWord)}
+              {/* Trimmed, as the validator trims it: a word typed with a stray space around it
+                  would otherwise pass the "is it in the headline?" check and highlight nothing. */}
+              {accentedHeading(hero.heading, hero.accentWord.trim())}
             </h1>
 
             <p className="rise rise-3 mt-6 max-w-2xl text-lg text-bark/85 sm:text-xl">{hero.lede}</p>
@@ -83,7 +91,7 @@ export function HomeHero({ hero }: HomeHeroProps) {
             </p>
           </div>
 
-          {/* On phones the badge closes the scene, centered above the ridge. */}
+          {/* On phones the badge closes the scene, centered in front of the far peaks. */}
           <div className="rise justify-self-center rounded-3xl bg-snow p-4 shadow-lift ring-1 ring-bark/10 transition-transform duration-300 ease-out motion-safe:-rotate-2 motion-safe:hover:rotate-0 md:col-start-1 md:row-start-1 md:justify-self-start">
             <Image
               src="/images/logo-512.webp"

@@ -64,6 +64,19 @@ export interface RuleChecks {
  * case-insensitive.
  */
 export function buildRuleChecks(rules: ContentRules): RuleChecks {
+  // The editor validates on every keystroke against the same rules object for the life of the
+  // page; compiling one RegExp per banned word each time is pure waste, so the result is kept
+  // per rules object (weakly — a rules object nothing holds any more takes its checks with it).
+  const cached = RULE_CHECKS.get(rules);
+  if (cached !== undefined) return cached;
+  const checks = compileRuleChecks(rules);
+  RULE_CHECKS.set(rules, checks);
+  return checks;
+}
+
+const RULE_CHECKS = new WeakMap<ContentRules, RuleChecks>();
+
+function compileRuleChecks(rules: ContentRules): RuleChecks {
   return {
     forbidden: rules.forbiddenWords.map((word) => ({
       word,

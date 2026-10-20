@@ -110,8 +110,7 @@ export const DOCUMENTS: Readonly<Record<DocumentKey, DocumentDefinition>> = {
  *
  * This is a shape match rather than a spec walk on purpose: it has to answer "is this picture
  * still in use?" for *any* stored document, including one saved before a spec changed, so it
- * looks for the photo shape wherever it appears. The build plugin reimplements the same walk in
- * plain JavaScript — keep the two in step.
+ * looks for the photo shape wherever it appears.
  */
 export function collectImageIds(document: unknown): readonly string[] {
   const ids: string[] = [];

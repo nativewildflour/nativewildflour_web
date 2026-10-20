@@ -49,9 +49,9 @@ export function NoteList({
 
   return (
     <ul className={`grid gap-4 ${COLUMNS[columns]} ${className}`.trim()}>
-      {items.map((item) => (
+      {items.map((item, index) => (
         <li
-          key={item}
+          key={index}
           className={`flex h-full items-start gap-3 rounded-3xl ${SURFACES[surface]} p-5 shadow-card ring-1 ring-bark/10`}
         >
           <span

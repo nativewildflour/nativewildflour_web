@@ -2,13 +2,26 @@ import { ButtonLink } from '@/components/ButtonLink';
 import { FACEBOOK_URL } from '@/data/business';
 
 export interface SpecialsCalloutProps {
-  /** The menu document's specials note — the one editable sentence in this box. */
+  /** The box heading, from the menu document's page wording. */
+  readonly title: string;
+  /** Opening sentence printed before the note, in the same paragraph. May be blank. */
+  readonly lead: string;
+  /** The menu document's specials note. */
   readonly note: string;
   readonly className?: string;
 }
 
-/** The day's-special note, set like a hand-stamped ticket pointing at Facebook. */
-export function SpecialsCallout({ note, className = '' }: SpecialsCalloutProps) {
+/** The box's one paragraph: the opening line, when there is one, then the note. */
+export function specialsText(lead: string, note: string): string {
+  const opening = lead.trim();
+  return opening === '' ? note : `${opening} ${note}`;
+}
+
+/**
+ * The day's-special note, set like a hand-stamped ticket pointing at Facebook. The words are the
+ * owner's; the Facebook link and its button label are fixed.
+ */
+export function SpecialsCallout({ title, lead, note, className = '' }: SpecialsCalloutProps) {
   return (
     <aside
       aria-labelledby="todays-special-heading"
@@ -32,11 +45,10 @@ export function SpecialsCallout({ note, className = '' }: SpecialsCalloutProps) 
         </span>
         <div>
           <h2 id="todays-special-heading" className="text-2xl font-black text-bark">
-            Today’s special
+            {title}
           </h2>
           <p className="mt-2 text-bark/80">
-            The savory bannock special is different most days.{' '}
-            {note}
+            {specialsText(lead, note)}
           </p>
           <ButtonLink href={FACEBOOK_URL} variant="accent" className="mt-5">
             See today’s special on Facebook

@@ -56,6 +56,12 @@ const PHONE_HREF = `tel:${PHONE_E164}`;
 const SCHEMA_TELEPHONE = PHONE_DISPLAY;
 const OPEN_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const CLOSED_DAY = 'Saturday';
+/**
+ * Whether this build may be indexed — the same variable, parsed the same way, as
+ * `SITE_INDEXABLE` in src/lib/site.ts. The build inlines it, so a gate run with a different
+ * value from its build fails the robots checks instead of passing output nobody asked for.
+ */
+const INDEXABLE = process.env.NEXT_PUBLIC_SITE_INDEXABLE?.trim() === 'true';
 /** Must match `--color-blueberry` / `--color-cream` in src/app/globals.css. */
 const THEME_COLOR = '#3A5FA8';
 const BACKGROUND_COLOR = '#FFF8EC';
@@ -625,12 +631,12 @@ async function runChecks(base) {
     check(Boolean(description), 'missing meta description');
 
     const canonical = html.match(/<link\s+rel="canonical"\s+href="([^"]*)"/i)?.[1];
+    const robotsTags = html.match(/<meta\s+name="robots"[^>]*>/gi) ?? [];
     if (page.canonical === null) {
       check(
         !canonical,
         `a noindex page must not declare a canonical URL (found ${canonical})`,
       );
-      const robotsTags = html.match(/<meta\s+name="robots"[^>]*>/gi) ?? [];
       check(
         robotsTags.length === 1 && /noindex/i.test(robotsTags[0] ?? ''),
         `a noindex page needs exactly one noindex robots tag, found ${JSON.stringify(robotsTags)}`,
@@ -642,6 +648,19 @@ async function runChecks(base) {
       check(
         !canonical || canonical === expectedCanonical,
         `canonical is "${canonical}", expected "${expectedCanonical}"`,
+      );
+      // Checked both ways: a pitch deploy that became indexable and a launch that stayed
+      // hidden are the same mistake — output that disagrees with NEXT_PUBLIC_SITE_INDEXABLE.
+      const noindex = robotsTags.some((tag) => /noindex/i.test(tag));
+      check(
+        robotsTags.length === 1,
+        `expected exactly one robots tag, found ${JSON.stringify(robotsTags)}`,
+      );
+      check(
+        noindex === !INDEXABLE,
+        INDEXABLE
+          ? 'page is noindex, but NEXT_PUBLIC_SITE_INDEXABLE=true'
+          : 'page is indexable, but NEXT_PUBLIC_SITE_INDEXABLE is not true (pre-launch builds must be noindex)',
       );
     }
 
@@ -760,11 +779,19 @@ async function runChecks(base) {
   check(robots.status === 200, `GET /robots.txt answered ${robots.status}`);
   documents.push({ label: 'GET /robots.txt', contents: robots.body });
   check(/^user-agent:\s*\*/im.test(robots.body), 'no wildcard User-Agent rule');
+  // `allow: /` in both modes: a pre-launch page's noindex only works if crawlers can read it.
   check(/^allow:\s*\//im.test(robots.body), 'does not allow /');
-  check(
-    /^sitemap:\s*https?:\/\/\S+\/sitemap\.xml\s*$/im.test(robots.body),
-    'missing an absolute Sitemap: URL',
-  );
+  if (INDEXABLE) {
+    check(
+      /^sitemap:\s*https?:\/\/\S+\/sitemap\.xml\s*$/im.test(robots.body),
+      'missing an absolute Sitemap: URL',
+    );
+  } else {
+    check(
+      !/^sitemap:/im.test(robots.body),
+      'advertises a sitemap, but NEXT_PUBLIC_SITE_INDEXABLE is not true (pre-launch)',
+    );
+  }
 
   // --- manifest -------------------------------------------------------------
   group('manifest.webmanifest');
@@ -949,6 +976,12 @@ async function main() {
       `  ${g.group.padEnd(width)}  ${ok ? 'PASS' : `FAIL (${g.failures.length})`}`,
     );
   }
+  console.log('');
+  console.log(
+    INDEXABLE
+      ? 'Indexing: ON (NEXT_PUBLIC_SITE_INDEXABLE=true) — public pages must be index, follow.'
+      : 'Indexing: OFF (pre-launch) — public pages must be noindex. Set NEXT_PUBLIC_SITE_INDEXABLE=true for the production deploy at launch.',
+  );
   console.log('');
 
   if (failed.length > 0) {

@@ -240,7 +240,12 @@ export function useDocumentEditor<T extends object>(
   );
 
   const present = history.present;
-  const dirty = !documentsEqual(present, history.baseline);
+  // Memoized: the check canonicalizes and serializes both documents, and the hook re-renders
+  // for plenty of reasons that touch neither (status, confirms, announcements, busy).
+  const dirty = useMemo(
+    () => !documentsEqual(present, history.baseline),
+    [present, history.baseline],
+  );
   const issues = useMemo(() => validate(present, rules), [validate, present, rules]);
   const readOnly = mode === 'offline' || mode === 'expired' || mode === 'error';
   const canPublish = phase === 'ready' && !readOnly && dirty && issues.length === 0 && !busy;
@@ -347,6 +352,11 @@ export function useDocumentEditor<T extends object>(
     function onKeyDown(event: KeyboardEvent) {
       if (shortcutsBlockedRef.current) return;
       if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      // A modal that lives outside editor state (the photo library) still blocks: an undo
+      // from inside it would change the document behind the scrim without a word.
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]') !== null) {
+        return;
+      }
       const key = event.key.toLowerCase();
       if (key === 'z' && !event.shiftKey) {
         event.preventDefault();

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import type { DocumentKey, VersionEntry } from '@/components/admin/api';
 import { loadVersions } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
+import { formatWhen } from '@/components/admin/use-document-editor';
 
 export interface VersionHistoryProps {
   /** Which document's history to list — snapshots are kept per document. */
@@ -27,12 +28,6 @@ type FetchState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'error'; readonly message: string }
   | { readonly kind: 'ready'; readonly versions: readonly VersionEntry[] };
-
-function formatWhen(iso: string): string {
-  const time = Date.parse(iso);
-  if (Number.isNaN(time)) return iso;
-  return new Date(time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
 
 /**
  * Collapsed by default; fetches `/admin/api/content/<doc>/versions` on first open and again

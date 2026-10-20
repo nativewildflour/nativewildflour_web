@@ -7,6 +7,7 @@ import { Section } from '@/components/Section';
 import { GoodToKnow } from '@/components/menu/GoodToKnow';
 import { MenuJumpLinks } from '@/components/menu/MenuJumpLinks';
 import { SpecialsCallout } from '@/components/menu/SpecialsCallout';
+import { menuPageCopy } from '@/lib/default-menu';
 import type { BreadcrumbItem } from '@/lib/schema';
 import { breadcrumbSchema, menuSchema } from '@/lib/schema';
 import { buildMetadata } from '@/lib/seo';
@@ -29,6 +30,7 @@ export const revalidate = 60;
 
 export default async function MenuPage() {
   const { document: menu } = await getContent('menu');
+  const page = menuPageCopy(menu);
 
   return (
     <>
@@ -40,7 +42,7 @@ export default async function MenuPage() {
       <Section tone="parchment" flourish={false}>
         <Breadcrumbs items={BREADCRUMBS} />
         <p className="mt-6 text-sm font-bold tracking-[0.18em] text-wood uppercase">
-          Fresh every day
+          {page.eyebrow}
         </p>
         <h1 className="mt-2 text-4xl font-black text-bark sm:text-6xl">Menu</h1>
         <TitleStroke draw className="mt-3 h-2 w-28 text-honey" />
@@ -49,9 +51,13 @@ export default async function MenuPage() {
       </Section>
 
       <Section>
-        <SpecialsCallout note={menu.specialsNote} />
+        <SpecialsCallout
+          title={page.specialsTitle}
+          lead={page.specialsLead}
+          note={menu.specialsNote}
+        />
 
-        <h2 className="mt-14 text-3xl font-black text-bark sm:text-4xl">What we serve</h2>
+        <h2 className="mt-14 text-3xl font-black text-bark sm:text-4xl">{page.sectionsTitle}</h2>
         <TitleStroke />
         <div className="mt-8 grid gap-6 sm:grid-cols-2">
           {menu.sections.map((section) => {
@@ -70,8 +76,8 @@ export default async function MenuPage() {
         </div>
       </Section>
 
-      <Section tone="sky" eyebrow="Before you order" title="Good to know">
-        <GoodToKnow />
+      <Section tone="sky" eyebrow={page.goodToKnow.eyebrow} title={page.goodToKnow.title}>
+        <GoodToKnow notes={page.goodToKnow.notes} />
         <div className="mt-10 flex flex-wrap gap-3">
           <ButtonLink href="/directions/">Directions from the docks</ButtonLink>
           <ButtonLink href="/about/" variant="secondary">

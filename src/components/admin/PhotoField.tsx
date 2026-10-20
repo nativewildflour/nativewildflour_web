@@ -14,7 +14,7 @@
  */
 
 import Image from 'next/image';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { imagePreviewUrl, uploadImage } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
@@ -61,6 +61,16 @@ export function PhotoField({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const busy = progress !== 'idle';
   const image = value.image;
+  /**
+   * The latest `value`/`onChange`, for the upload path. `handleFile` awaits a resize and a
+   * round trip, and the other fields stay editable meanwhile; every `onChange` up the tree
+   * spreads the record it was rendered with, so calling the props captured before the await
+   * would put the whole document back to that moment and quietly drop those edits.
+   */
+  const latest = useRef({ value, onChange });
+  useEffect(() => {
+    latest.current = { value, onChange };
+  });
 
   function fail(message: string) {
     setError(message);
@@ -86,8 +96,8 @@ export function PhotoField({
     setProgress('idle');
 
     if (result.kind === 'ok') {
-      onChange({
-        ...value,
+      latest.current.onChange({
+        ...latest.current.value,
         image: { id: result.image.id, width: result.image.width, height: result.image.height },
       });
       announce(`Photo added — ${result.image.width} by ${result.image.height} pixels.`);

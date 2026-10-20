@@ -9,7 +9,7 @@
  * it is typed.
  */
 
-import { DEFAULT_MENU } from '@/components/admin/default-menu';
+import { DEFAULT_MENU } from '@/lib/default-menu';
 import { PREVIEW_IMAGE_BASE } from '@/components/admin/previews/PreviewFrame';
 import { BannockIntro } from '@/components/home/BannockIntro';
 import { FacebookCta } from '@/components/home/FacebookCta';

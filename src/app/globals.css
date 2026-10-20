@@ -19,6 +19,16 @@
   --color-fireweed-deep: #9E2F60;
   --color-spruce-deep: #234939;
 
+  /* The home hero's Taiya Inlet scene: distance painted as sky mixed into the palette,
+     so the far range, the nearer range and the water sit in depth without a new hue. */
+  --color-peak-far: color-mix(in srgb, var(--color-blueberry) 20%, var(--color-sky));
+  --color-peak-near: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--color-spruce) 50%, var(--color-blueberry)) 55%,
+    var(--color-sky)
+  );
+  --color-inlet: color-mix(in srgb, var(--color-blueberry) 34%, var(--color-sky));
+
   /* Warm bark-tinted elevation, instead of neutral black shadows. */
   --shadow-card: 0 1px 2px rgb(59 42 26 / 0.06), 0 10px 24px -14px rgb(59 42 26 / 0.25);
   --shadow-lift: 0 2px 4px rgb(59 42 26 / 0.08), 0 18px 36px -14px rgb(59 42 26 / 0.3);

@@ -32,7 +32,7 @@ export function DockCard({ dock, className = '' }: DockCardProps) {
       {/* The dotted line runs behind the number badges, like a route on a map. */}
       <ol className="relative mt-5 space-y-4 border-t border-bark/10 pt-5 before:absolute before:top-7 before:bottom-3 before:left-3 before:border-l-2 before:border-dotted before:border-blueberry/30">
         {dock.steps.map((step, index) => (
-          <li key={step} className="relative flex gap-3">
+          <li key={index} className="relative flex gap-3">
             <span
               aria-hidden="true"
               className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-blueberry text-sm font-bold text-snow ring-4 ring-snow"

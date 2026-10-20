@@ -137,7 +137,17 @@ function portInUse(port) {
 
 let nextDev = null;
 if (await portInUse(NEXT_PORT)) {
-  console.log(`[dev-admin] port ${NEXT_PORT} is already serving — using that next dev instead of starting one.`);
+  // Only a process this script spawns inherits the blob context and the credentials set above;
+  // a `next dev` started by hand has neither, so through it the pages render the committed
+  // defaults and the refresh route answers 503. Say so, loudly, rather than let the banner
+  // below promise a loop that is not there.
+  console.warn(
+    `[dev-admin] port ${NEXT_PORT} is already serving — using that next dev instead of starting one.\n` +
+      `[dev-admin] WARNING: it was not started by this script, so it cannot see the local blob store or the admin\n` +
+      `[dev-admin] credentials: the pages will keep showing the defaults after a publish, and every publish will\n` +
+      `[dev-admin] report that the site could not be refreshed. Stop it and run \`npm run dev:admin\` on its own\n` +
+      `[dev-admin] for the full loop.`,
+  );
 } else {
   const nextBin = require.resolve('next/dist/bin/next');
   // `DEV_ADMIN_NEXT=start` serves the last `npm run build` instead, ISR cache and all.

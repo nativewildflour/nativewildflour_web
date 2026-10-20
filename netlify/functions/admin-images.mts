@@ -105,9 +105,14 @@ function stringFrom(value: unknown): string {
 async function readReferences(): Promise<Map<string, DocumentKey[]>> {
   const store = getStore(CONTENT_STORE, { consistency: 'strong' });
   const references = new Map<string, DocumentKey[]>();
-  for (const doc of DOCUMENT_KEYS) {
-    const raw: string | null = await store.get(`${doc}.json`, { type: 'text' });
-    if (raw === null) continue;
+  // The four reads are independent, so they go out together; the fold below runs in
+  // `DOCUMENT_KEYS` order so `usedBy` lists pages in a stable order.
+  const raws: (string | null)[] = await Promise.all(
+    DOCUMENT_KEYS.map((doc) => store.get(`${doc}.json`, { type: 'text' })),
+  );
+  for (const [position, doc] of DOCUMENT_KEYS.entries()) {
+    const raw = raws[position];
+    if (raw === null || raw === undefined) continue;
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -135,10 +140,13 @@ async function listImages(store: ImageStore): Promise<Response> {
     readReferences(),
   ]);
   const keys = blobs.map((blob) => blob.key).sort((a, b) => b.localeCompare(a));
+  // The listing carries no metadata, so each photo costs a HEAD; they go out together rather
+  // than one at a time — a library of a few dozen photos read serially would run past the
+  // function's time limit and take every photo picker down with it.
+  const entries = await Promise.all(keys.map((id) => store.getMetadata(id)));
   const images: ImageRecord[] = [];
-  for (const id of keys) {
-    const entry = await store.getMetadata(id);
-    const metadata = entry?.metadata ?? {};
+  for (const [position, id] of keys.entries()) {
+    const metadata = entries[position]?.metadata ?? {};
     images.push({
       id,
       width: numberFrom(metadata.width),
@@ -234,7 +242,13 @@ async function getImage(store: ImageStore, id: string): Promise<Response> {
   }
   return new Response(bytes, {
     status: 200,
-    headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' },
+    headers: {
+      'Content-Type': 'image/jpeg',
+      // An id is minted per upload and never reused, so the bytes behind it cannot change;
+      // `private` keeps the copy in the signed-in browser only, so the library, the pickers and
+      // the preview stop re-downloading every photo through a function call each time they open.
+      'Cache-Control': 'private, max-age=31536000, immutable',
+    },
   });
 }
 

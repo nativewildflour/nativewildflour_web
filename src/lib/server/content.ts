@@ -20,11 +20,17 @@
  *     request goes out, so the build never sees an uncached fetch.
  *   - **Unreadable content** (bad JSON, wrong shape) — throw. The owner's real content is
  *     there and we cannot read it; quietly reverting to the default would publish words she
- *     did not write. The editor shows error mode with version history, and the last good
- *     render keeps being served.
+ *     did not write. The editor shows error mode with version history.
  *   - **Any other failure** (the store could not be reached) — throw, for the same reason.
- *     During regeneration Next keeps serving the last good page, so a transient outage costs
- *     freshness, never correctness.
+ *
+ * What a throw costs the public page depends on how the render was triggered. The 60-second
+ * timer is stale-while-revalidate: a failed regeneration logs and the last good page stays up.
+ * On-demand revalidation (`/admin/api/revalidate` — every publish, restore and post-deploy
+ * refresh) drops the cached entry first and renders blocking, so a throw there is an error page
+ * until the blob is repaired. That is the trade-off chosen here: the publish endpoint is the
+ * only writer and validates every save, so an unreadable blob means a spec changed underneath
+ * saved content (see the CLAUDE.md note on adding required fields) — a bug to fix loudly, not
+ * to paper over with the defaults.
  */
 
 import { getStore } from '@netlify/blobs';

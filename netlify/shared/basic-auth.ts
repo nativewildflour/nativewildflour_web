@@ -1,6 +1,7 @@
 /**
  * HTTP Basic auth helpers shared by the edge guard (`netlify/edge-functions/admin-auth.ts`,
- * Deno runtime) and the menu API (`netlify/functions/admin-menu.mts`, Node runtime).
+ * Deno runtime), the content and image APIs (`netlify/functions/admin-content.mts`,
+ * `admin-images.mts`, Node runtime) and the refresh route (`src/app/admin/api/revalidate/`).
  *
  * Web APIs only: `atob`, `TextDecoder`, and `Response` exist as globals in both runtimes,
  * while `node:crypto` does not — so the constant-time comparison is hand-rolled below.

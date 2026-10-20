@@ -8,7 +8,13 @@
  * generically through their field spec.
  */
 
-import type { MenuContent, MenuItemContent, MenuSectionContent } from '@/lib/menu-content';
+import { menuPageCopy } from '@/lib/default-menu';
+import type {
+  MenuContent,
+  MenuItemContent,
+  MenuPageCopy,
+  MenuSectionContent,
+} from '@/lib/menu-content';
 import { slugify } from '@/lib/menu-content';
 
 /** Sections and item totals, for the publish confirmation summary. */
@@ -258,4 +264,19 @@ export function setIntro(menu: MenuContent, intro: string): MenuContent {
 
 export function setSpecialsNote(menu: MenuContent, specialsNote: string): MenuContent {
   return { ...menu, specialsNote };
+}
+
+/** The single-line fields of the page wording that the menu editor draws by hand. */
+export type MenuPageTextKey = 'eyebrow' | 'specialsTitle' | 'specialsLead' | 'sectionsTitle';
+
+/**
+ * Replaces the page wording. A menu that predates it starts from the wording the site shows
+ * today (the default's), so the first edit writes the whole block, never a partial one.
+ */
+export function setPage(menu: MenuContent, page: MenuPageCopy): MenuContent {
+  return { ...menu, page };
+}
+
+export function setPageText(menu: MenuContent, key: MenuPageTextKey, value: string): MenuContent {
+  return setPage(menu, { ...menuPageCopy(menu), [key]: value });
 }

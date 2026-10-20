@@ -11,8 +11,8 @@ export function MeetKelly({ content }: MeetKellyProps) {
   return (
     <Section eyebrow={content.eyebrow} title={content.title} width="3xl">
       <div className="space-y-4 text-lg text-bark/85">
-        {content.paragraphs.map((paragraph) => (
-          <p key={paragraph}>{paragraph}</p>
+        {content.paragraphs.map((paragraph, index) => (
+          <p key={index}>{paragraph}</p>
         ))}
       </div>
 

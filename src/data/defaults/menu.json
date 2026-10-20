@@ -2,6 +2,33 @@
   "version": 1,
   "intro": "Everything is made fresh daily. The savory lunch specials rotate and often sell out, so come early. Prices are posted at the counter — ask at the window for today’s specials.",
   "specialsNote": "Check our Facebook page for today’s lunch special.",
+  "page": {
+    "eyebrow": "Fresh every day",
+    "specialsTitle": "Today’s special",
+    "specialsLead": "The savory bannock special is different most days.",
+    "sectionsTitle": "What we serve",
+    "goodToKnow": {
+      "eyebrow": "Before you order",
+      "title": "Good to know",
+      "notes": [
+        {
+          "icon": "flame",
+          "title": "Made fresh daily",
+          "body": "Bannock is fried to order, and the house-baked cookies and muffins change from day to day."
+        },
+        {
+          "icon": "timer",
+          "title": "Specials sell out",
+          "body": "The savory bannock lunch special rotates and often sells out, so come early if you have your heart set on it."
+        },
+        {
+          "icon": "bag",
+          "title": "Made to go",
+          "body": "We are a grab-and-go spot: order at the window and take it with you."
+        }
+      ]
+    }
+  },
   "sections": [
     {
       "id": "bannock",

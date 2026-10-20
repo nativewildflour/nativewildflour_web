@@ -7,6 +7,11 @@
  * restore) and `DocumentEditorFrame` draws the chrome around it, so what lives here is what is
  * genuinely about menus — the section and item controls, their focus and announcements, and
  * the path labels the issues panel reads out.
+ *
+ * The same screen edits the words around the menu on `/menu/` (the document's `page` block),
+ * laid out in the order the page prints them. Its single lines are drawn here like the rest of
+ * the menu's fields; the "Good to know" notes are a repeatable list, so `SchemaFields` draws
+ * them from the block's field spec — the same list controls the page editors use.
  */
 
 import { useState } from 'react';
@@ -17,13 +22,18 @@ import { DocumentEditorFrame } from '@/components/admin/DocumentEditorFrame';
 import { stopUndoRedoPropagation, TextAreaField, TextField } from '@/components/admin/fields';
 import * as ops from '@/components/admin/menu-ops';
 import { countMenu } from '@/components/admin/menu-ops';
+import type { MenuPageTextKey } from '@/components/admin/menu-ops';
 import { PreviewPane } from '@/components/admin/PreviewPane';
+import { SchemaFields } from '@/components/admin/SchemaFields';
 import type { SectionActions } from '@/components/admin/SectionEditor';
 import { SectionEditor } from '@/components/admin/SectionEditor';
-import { DEFAULT_MENU } from '@/components/admin/default-menu';
 import { focusSoon, useDocumentEditor } from '@/components/admin/use-document-editor';
+import type { DocumentSpec } from '@/lib/content-schema';
+import { describeSpecPath } from '@/lib/content-schema';
+import { DEFAULT_MENU, menuPageCopy } from '@/lib/default-menu';
 import type { MenuContent } from '@/lib/menu-content';
 import {
+  MENU_PAGE_FIELDS,
   MENU_PRICE_NOTE,
   parseMenuContent,
   slugify,
@@ -45,9 +55,21 @@ function summarizeMenu(menu: MenuContent): string {
   } go live on the site.`;
 }
 
+/** The page wording as a spec of its own, for naming the fields an issue points at. */
+const PAGE_SPEC: DocumentSpec = { fields: MENU_PAGE_FIELDS };
+
+/** The one part of the page wording `SchemaFields` draws: the "Good to know" card. */
+const GOOD_TO_KNOW_SPEC: DocumentSpec = { fields: { goodToKnow: MENU_PAGE_FIELDS.goodToKnow } };
+
+const PAGE_PREFIX = 'page.';
+
 /** `sections[2].items[0].name` → a label the owner can read, e.g. `House-Baked Goods · item 1 · name`. */
 function describeMenuPath(menu: MenuContent, path: string): string {
   if (path === '') return 'Menu';
+  if (path === 'page') return 'Menu page wording';
+  if (path.startsWith(PAGE_PREFIX)) {
+    return describeSpecPath(PAGE_SPEC, menuPageCopy(menu), path.slice(PAGE_PREFIX.length));
+  }
   if (path === 'intro') return 'Menu intro';
   if (path === 'specialsNote') return 'Specials note';
   if (path === 'sections') return 'Sections';
@@ -72,6 +94,24 @@ function describeMenuPath(menu: MenuContent, path: string): string {
   return `${sectionLabel} · ${rest.replace(/^\./, '')}`;
 }
 
+interface PageTextFieldProps {
+  readonly id: string;
+  readonly label: string;
+  readonly hint: string | undefined;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}
+
+/** A single line of the page wording, its hint under the field as `SchemaFields` sets it. */
+function PageTextField({ id, label, hint, value, onChange }: PageTextFieldProps) {
+  return (
+    <div>
+      <TextField id={id} label={label} value={value} onChange={onChange} />
+      {hint ? <p className="mt-1 text-sm text-bark/70">{hint}</p> : null}
+    </div>
+  );
+}
+
 export function MenuEditor() {
   const editor = useDocumentEditor<MenuContent>({
     doc: 'menu',
@@ -83,6 +123,20 @@ export function MenuEditor() {
   });
   const { announce, applyEdit, closeConfirm, requestConfirm, rules } = editor;
   const menu = editor.present;
+
+  const page = menuPageCopy(menu);
+
+  /** Props for one hand-drawn line of the page wording: label, hint and id from its spec. */
+  function pageText(key: MenuPageTextKey): PageTextFieldProps {
+    const field = MENU_PAGE_FIELDS[key];
+    return {
+      id: `field-page.${key}`,
+      label: 'optional' in field && field.optional ? `${field.label} (optional)` : field.label,
+      hint: 'hint' in field ? field.hint : undefined,
+      value: page[key],
+      onChange: (value) => applyEdit(ops.setPageText(menu, key, value), `page.${key}`),
+    };
+  }
 
   const [newSectionName, setNewSectionName] = useState('');
   const [newSectionError, setNewSectionError] = useState<string | null>(null);
@@ -253,23 +307,16 @@ export function MenuEditor() {
         className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
       >
         <h2 id="menu-copy-heading" className="text-xl font-black text-bark">
-          Menu copy
+          Top of the page
         </h2>
         <div className="mt-4 space-y-4">
+          <PageTextField {...pageText('eyebrow')} />
           <TextAreaField
             id="field-intro"
             label="Menu intro"
             hint="The welcome under the Menu heading — a sentence or two."
             value={menu.intro}
             onChange={(value) => applyEdit(ops.setIntro(menu, value), 'intro')}
-          />
-          <TextAreaField
-            id="field-specialsNote"
-            label="Specials note"
-            hint="Shown in the Today’s special box, next to the Facebook button."
-            rows={2}
-            value={menu.specialsNote}
-            onChange={(value) => applyEdit(ops.setSpecialsNote(menu, value), 'specialsNote')}
           />
           <div className="rounded-xl bg-parchment p-3 ring-1 ring-bark/10">
             <p className="text-xs font-bold tracking-[0.14em] text-wood uppercase">
@@ -283,11 +330,38 @@ export function MenuEditor() {
         </div>
       </section>
 
+      <section
+        aria-labelledby="specials-heading"
+        className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
+      >
+        <h2 id="specials-heading" className="text-xl font-black text-bark">
+          Today’s special box
+        </h2>
+        <p className="mt-1 text-sm text-bark/70">
+          The dashed box above the menu. The Facebook button under the words is added for you.
+        </p>
+        <div className="mt-4 space-y-4">
+          <PageTextField {...pageText('specialsTitle')} />
+          <PageTextField {...pageText('specialsLead')} />
+          <TextAreaField
+            id="field-specialsNote"
+            label="Specials note"
+            hint="Follows the opening line — point people to where today’s special is posted."
+            rows={2}
+            value={menu.specialsNote}
+            onChange={(value) => applyEdit(ops.setSpecialsNote(menu, value), 'specialsNote')}
+          />
+        </div>
+      </section>
+
       <section aria-labelledby="sections-heading">
         <h2 id="sections-heading" className="text-xl font-black text-bark">
           Sections
         </h2>
-        <div className="mt-4 space-y-5">
+        <div className="mt-4 rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6">
+          <PageTextField {...pageText('sectionsTitle')} />
+        </div>
+        <div className="mt-5 space-y-5">
           {/* Keyed by id (unique via `uniqueSectionId`): per-section local state — like an
               unsent "New topping" — follows the section, not the position. */}
           {menu.sections.map((section, index) => (
@@ -331,6 +405,20 @@ export function MenuEditor() {
           ) : null}
         </form>
       </section>
+
+      {/* Stays editable when publishing is off, like every other field on this screen —
+          nothing in the notes needs the server. */}
+      <SchemaFields
+        spec={GOOD_TO_KNOW_SPEC}
+        document={page}
+        basePath="page"
+        legend="Good to know notes"
+        onChange={(next, coalesceKey) => applyEdit(ops.setPage(menu, next), coalesceKey)}
+        readOnly={false}
+        announce={announce}
+        requestConfirm={requestConfirm}
+        closeConfirm={closeConfirm}
+      />
     </DocumentEditorFrame>
   );
 }
