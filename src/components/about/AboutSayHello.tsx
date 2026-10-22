@@ -99,7 +99,7 @@ export function AboutSayHello({ content }: AboutSayHelloProps) {
             <li className="flex gap-3">
               <ChatIcon />
               <a href={FACEBOOK_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
-                {BUSINESS_NAME} on Facebook
+                <span translate="no">{BUSINESS_NAME}</span> on Facebook
               </a>
             </li>
           </ul>

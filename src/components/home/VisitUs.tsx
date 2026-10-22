@@ -66,7 +66,7 @@ export function VisitUs({ content }: VisitUsProps) {
         <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-snow text-blueberry shadow-press">
           <ShipIcon className="h-6 w-6" />
         </span>
-        <div>
+        <div className="min-w-0 break-words">
           <h3 className="text-xl font-black text-bark">{content.cruiseTitle}</h3>
           <p className="mt-2 text-bark/85">{content.cruiseBody}</p>
           <div className="mt-4">

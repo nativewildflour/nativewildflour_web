@@ -16,7 +16,7 @@ export function ChipList({ items, labelledBy, className = '' }: ChipListProps) {
       {items.map((item, index) => (
         <li
           key={index}
-          className="rounded-full bg-snow px-3.5 py-1.5 text-sm font-semibold whitespace-nowrap text-bark shadow-press ring-1 ring-wood/25"
+          className="rounded-full bg-snow px-3.5 py-1.5 text-sm max-w-full font-semibold break-words text-bark shadow-press ring-1 ring-wood/25"
         >
           {item}
         </li>

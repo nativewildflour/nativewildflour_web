@@ -43,7 +43,7 @@ export function SpecialsCallout({ title, lead, note, className = '' }: SpecialsC
             <path d="M18.4 17.2l.7 1.7 1.8.2-1.4 1.2.4 1.8-1.5-.9-1.6.9.4-1.8-1.3-1.2 1.8-.2Z" />
           </svg>
         </span>
-        <div>
+        <div className="min-w-0 break-words">
           <h2 id="todays-special-heading" className="text-2xl font-black text-bark">
             {title}
           </h2>

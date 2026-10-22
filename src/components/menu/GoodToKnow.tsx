@@ -77,7 +77,7 @@ function NoteCard({
       <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-spruce/10">
         {icon}
       </span>
-      <div>
+      <div className="min-w-0 break-words">
         <h3 className="text-lg font-black text-bark">{title}</h3>
         <p className="mt-1 text-bark/80">{body}</p>
       </div>

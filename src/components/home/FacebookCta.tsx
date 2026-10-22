@@ -17,7 +17,7 @@ export function FacebookCta({ content }: FacebookCtaProps) {
           <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-snow/15 text-sky">
             <ChatIcon className="h-6 w-6" />
           </span>
-          <div>
+          <div className="min-w-0 break-words">
             <h2 className="text-2xl font-black text-snow sm:text-3xl">{content.title}</h2>
             {/* The heading already says where; this line adds why it is worth the tap. */}
             <p className="mt-2 max-w-xl text-snow/85">{content.body}</p>
