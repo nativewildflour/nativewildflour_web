@@ -1,0 +1,115 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+@AGENTS.md
+
+## What this is
+
+Marketing site for **Native WILDFlour**, an independent cafe in Skagway, Alaska. Next.js 16 (App Router, TypeScript strict), React 19, Tailwind CSS 4, deployed on **Netlify's Next runtime** (`@netlify/plugin-nextjs`). The four public pages are ISR pages: prerendered at build, served from Netlify's cache, and re-rendered on demand from **Netlify Blobs** — the owner's content lives only there, never in the repo. A publish in the admin editors refreshes the live pages within seconds; nothing rebuilds. The admin section (`/admin/*`) is guarded by a Netlify Edge Function (HTTP Basic auth) and served by Netlify Functions for the content and photo APIs; a public function streams uploaded photos.
+
+`docs/BRIEF.md` is the authoritative spec for facts, content rules, and page copy (its §3 still describes the original static-export deployment; the runtime model below supersedes it). `PRODUCT.md` records the audience, positioning, and **project status: a spec build to pitch the owner — not commissioned, so nothing may be published or represented as the cafe's official site until she approves.** `README.md` covers deployment, content editing, and the admin editors in depth. Node 22+ (`.nvmrc`).
+
+`.agents/skills/` and `.claude/skills/` (the vendored `anti-ui-slop` skill, pinned by `skills-lock.json`) and `.uizze/` (its critique output) are tooling, not project code — don't edit them by hand.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on localhost:3000. No Blobs context, so pages render the defaults and the admin editors open read-only |
+| `npm run dev:admin` | The full loop without the Netlify CLI: `next dev` plus the real functions in-process behind localhost:8788, on a local blob store in `.netlify/dev-blobs/`. Pages and editors both read that store. Use it to test in a browser |
+| `netlify dev` | The same loop through the Netlify CLI (needs the CLI and a linked site) |
+| `npm run build` | `next build` — type-checks and prerenders every page from the defaults (no Blobs at build time) |
+| `npm run verify` | Acceptance checks — **run after every build**; this is the test suite. Spawns `next start`, fetches every registered route, and scans the chunks |
+| `npm run smoke:admin` | End-to-end test of the Netlify Functions and the server-side content loader against a throwaway local Blobs server — run after any change under `netlify/` or to the loader |
+| `npm run lint` | ESLint (flat config, `eslint-config-next`) |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run preview` | Build + `next start` on localhost:4173 |
+| `npm run prepare-assets` | Regenerate all images from `assets/logo.jpg` (only if the logo changes; outputs are committed) |
+
+There is no unit-test framework. `scripts/verify-build.mjs` is the acceptance gate — Netlify's build command is `npm run build && npm run verify`, so a failing check fails the deploy. It starts `next start` on a free port, then checks every registered route over HTTP: one `<h1>` per page, titles/descriptions/canonicals/OG/Twitter tags, JSON-LD validity and required `@type`s, that every public page renders the phone and an hours range matching the spec, that public robots tags and `robots.txt` match `NEXT_PUBLIC_SITE_INDEXABLE` (read from the gate's own environment, so it must match the build's), the sitemap, robots, manifest, and required assets; scans for banned wording in the rendered pages, every `.ts/.tsx/.css` under `src/`, and `README.md`; and scans `.next/static/chunks` for wrong-number digits so rule data can never ship in a client bundle. Exits non-zero on any failure. Because the build has no Blobs context, the gate always checks the **defaults**; owner content is validated at publish time instead.
+
+**Adding a route**: `verify` compares `.next/app-path-routes-manifest.json` against the `PAGES` array in `scripts/verify-build.mjs` and fails on any page route missing from it. Register it there — `requiredTypes` (JSON-LD `@type`s), `canonical` (`null` = noindex, no canonical link), and `copy: false` if it carries no phone/hours copy — and, if indexable, in `SITEMAP_PAGES` in `src/app/sitemap.ts`, listing every document the page renders: its `lastmod` is the newest `updatedAt` publish stamp among them, or the pinned `LAST_MODIFIED` when that is newer (bump it when a deploy changes what a page shows).
+
+Committing the `next dev`-regenerated AGENTS.md block with your work is expected — deleting it just re-creates an uncommitted change.
+
+## Architecture
+
+### Route layout and page frames
+
+`src/app/layout.tsx` is the document shell only: fonts, site-wide metadata defaults, and the organization JSON-LD. The page frame lives one level down:
+
+- `src/app/(site)/` — the four public pages (`/`, `/menu/`, `/about/`, `/directions/`). The group layout wraps them in `SiteChrome` (skip link, header, `main#main`, footer). Each page is an async server component with `export const revalidate = 60` that awaits `getContent()` for the documents it needs and passes them to section components (`src/components/{home,about,directions}/`, `MenuSection`) as props — the admin previews render the same components with a draft. Metadata comes from `buildMetadata()` in `src/lib/seo.ts`
+- `src/app/admin/` — outside the group, framed by `AdminShell` instead; static (no Blobs). Metadata comes from `buildAdminMetadata()` (`src/components/admin/metadata.ts`): noindex, no canonical. Never use `buildMetadata()` on a noindex page — verify rejects a canonical there. `src/app/admin/api/revalidate/route.ts` is the one Next route handler: POST, Basic-auth re-check, `revalidatePath` for the four pages and `/sitemap.xml`
+- `src/app/not-found.tsx` — sits at the root, outside every group, so it wraps itself in `SiteChrome` (the footer supplies the phone and hours copy verify expects on every non-admin page) and writes its metadata by hand (no canonical; Next already emits noindex, and `buildMetadata()` would add a second robots tag)
+
+### Content: Blobs at request time, defaults in the repo
+
+Two kinds of data feed the pages:
+
+**Verified facts, as code** (rule-pinned, shared across pages and the JSON-LD):
+
+- `src/data/business.ts` — name, address, geo, phone (`display`/`e164`/`href` must describe the same number), `OPENING_HOURS` (schema.org-shaped; `HOURS_ROWS`, `HOURS_SUMMARY` and `HOURS_SHORT` are all derived from it), Facebook link, motto, coffee roaster, `SEASON_NOTE` (the one seasonal claim the brief allows — hand-written, shared by several pages)
+- `src/data/map.ts` — `MAP_LINKS` and `MAP_TITLE`, derived from `GEO`
+- `src/data/nav.ts` — `NAV_LINKS`
+- `src/data/content-rules.json` — the canonical machine-readable content rules: the banned-vocabulary list plus `expectedHours` and `placeholders`. It feeds `scripts/verify-build.mjs`, the publish endpoint, and the admin editors — which fetch it at runtime from the auth-gated `GET /admin/api/rules`. Rule data, never rendered — **never import it from client code**: every validator takes the rules as an argument (`ContentRules | null`) precisely so an import can't inline the rule strings into a public JS chunk (the chunks scan enforces this)
+
+**Owner-editable documents, in Netlify Blobs** — four of them: `menu`, `home`, `about`, `directions`, each a blob `<doc>.json` in the store `site-content`, with snapshots under `<doc>-versions/`. The repo holds only a **default** for each, `src/data/defaults/<doc>.json`: the copy the site launched with, used when the store has nothing usable for that document. Nothing ever writes content back into the repo, and no build reads the store.
+
+- `src/lib/server/content.ts` — server-only loader. `getContent(doc)` (React `cache()`d per request) reads the blob with strong consistency (falling back to cached reads where the client refuses strong ones). Absent, empty, or whitespace-only → the default (`source: 'default'`). No Blobs environment at all (`next build`'s prerender, plain `next dev`) → the default. Malformed or structurally invalid content → **throws** with the document named: the editor shows error mode with version history, and nothing silently reverts the owner's edits. Any other store error also throws, for the same reason. Note what a throw costs the public page: the 60-second timer is stale-while-revalidate (the last good page stays up), but on-demand revalidation — every publish, restore and post-deploy refresh — drops the cache entry and renders blocking, so a throw there is an error page until the blob is repaired. A spec change that invalidates stored content therefore takes the site down on the next deploy; see the parity rules below
+- The menu feeds more than its own page: home highlights, about toppings, the `Menu` JSON-LD. Pages pass `menu.sections` down; helpers `bannockToppings()` and `MENU_PRICE_NOTE` (rule-driven copy, not editable) live in `src/lib/menu-content.ts`
+- **Freshness**: a publish or restore calls `POST /admin/api/revalidate`, which marks the four pages and the sitemap for regeneration; the next visit renders from the store. `revalidate = 60` on each page (and the sitemap) is the safety net. After every deploy the `refresh-content` build plugin makes the same call (`onSuccess`), because the build prerendered the defaults. Photos need no purge: every upload is a new id
+- Photos inside a document are `{ caption, image: { id, width, height } | null }`; bytes live in the store `site-images`; `PhotoSlot` renders `/images/uploads/<id>`, served by the public `uploads` function with immutable cache headers (`imageBase` lets the admin preview read the auth-gated endpoint instead)
+
+**`src/lib/`** ties it together: `site.ts` resolves `SITE_URL` (`NEXT_PUBLIC_SITE_URL` → Netlify's `URL` → `https://nativewildflour.netlify.app`; blank values fall through, non-origins throw) and every canonical, OG URL, sitemap entry, and JSON-LD URL derives from it. It also exports `SITE_INDEXABLE` — true only when `NEXT_PUBLIC_SITE_INDEXABLE` is `true` at build time (the prefix is for build-time inlining, so the prerender and ISR re-renders agree). Off, the pre-launch default, the public pages are `noindex, nofollow` (canonicals kept) and `robots.txt` still allows crawling but drops the `Sitemap:` line; it goes on for the production context only at launch (README). `seo.ts` has `buildMetadata()`; `schema.ts` builds the JSON-LD (schema.org type `["Restaurant","CafeOrCoffeeShop"]`; `menuSchema(sections)` takes the loaded menu). The content contract is the next section.
+
+### The content contract — one rule engine, three runtimes
+
+These modules run in the Next server, the admin client bundle, and the Netlify Functions, so they stay dependency-free, browser-safe, free of Node APIs, import no JSON, and use **relative import specifiers only** (the function bundler and the smoke harness don't know the `@/` alias):
+
+- `src/lib/copy-rules.ts` — `scanText()` and the rule patterns (banned words, hours-range regex + 24-hour conversion, placeholders, brand casing, prices, phone format), `slugify`, `ContentRules`, `CopyIssue`. The single implementation — never fork it
+- `src/lib/menu-content.ts` — the menu's bespoke shape: `parseMenuContent` (structure), `validateMenuCopy` (copy), `validateMenu` (both), plus the client-safe helpers above. One part is not bespoke: the optional `page` block (the wording around the menu on `/menu/` — eyebrow, specials box, sections heading, "Good to know" notes) is declared in the field-spec DSL as `MENU_PAGE_FIELDS` and walked by `fieldStructureIssues`/`fieldCopyIssues` from `content-schema.ts`. It is optional because menus saved before it existed have no such key; `menuPageCopy()` in `src/lib/default-menu.ts` (Next-only — it imports the default JSON) resolves it to the default's wording for the page, the preview and the editor alike
+- `src/lib/content-schema.ts` — the field-spec DSL for the page documents (`text`, `paragraphs`, `strings`, `select`, `photo`, `group`, `list`). One declaration drives both validation (`parseWithSpec`, `validateWithSpec`) and the generic editor UI (`describeSpecPath`, `emptyValue`). Structural failures (types, unknown keys, bad image refs, malformed slugs) reject the document; copy issues come back beside a usable one
+- `src/lib/content/{home,about,directions}.ts` — each page's `…Content` interface, its `…_SPEC` with owner-facing labels/hints, and `…ExtraChecks` for page contracts a spec can't express (e.g. the FAQ needs ≥ 1 item or the FAQPage JSON-LD breaks). `src/lib/content/images.ts` holds `ImageRef`/`PhotoContent`, `IMAGE_ID`, `UPLOADS_BASE`, `imageSrc()`
+- `src/lib/content-docs.ts` — the registry: `DOCUMENT_KEYS`, `DOCUMENTS[key] = { label, spec, parse, validate }`, `DocumentOf<K>`, `collectImageIds()`. Adding a document = default JSON + an entry here + an admin page + a page that awaits it
+
+Two parity rules follow from the design:
+
+- **Gate ↔ validator parity.** Any `verify` check reachable from owner-editable text must exist identically in the validator. The gate only ever sees the defaults now, so the validator at publish time is the *only* thing standing between owner text and the live site
+- **A field lives in three places.** Its declaration in the spec, its default value in the JSON, and its render in the component. The editor draws the control from the spec on its own. **Adding a required field to a spec breaks every stored document that predates it** (structural parse fails → the loader throws, the editor refuses to load); add new fields as optional or fill them from the default before parsing
+
+### Admin section
+
+The pages are statically rendered — noindex, no canonical, never in the sitemap, disallowed in `robots.ts`. Netlify adds the protection and the APIs at request time; `netlify.toml` routes both `/admin` and `/admin/*` to the edge function because `/admin/*` alone doesn't match `/admin`.
+
+- `netlify/edge-functions/admin-auth.ts` — runs on **Deno**: Web APIs only, and its import of the shared helper must spell out the `.ts` extension (hence `allowImportingTsExtensions` in tsconfig). Basic-auths against `ADMIN_USERNAME`/`ADMIN_PASSWORD` (503 when unset — fails closed) and stamps `no-store` + noindex headers on what it passes through
+- `netlify/shared/basic-auth.ts` — shared by the Deno edge function, the Node functions, and the revalidate route handler, so it is Web-API-only (hand-rolled constant-time compare; no `node:crypto`)
+- `netlify/functions/admin-content.mts` — Functions v2, `config.path` is an **exact-match list** (`/admin/api/content/:doc`, `…/versions`, `…/restore`, `/admin/api/rules`); a new API route must be added to that array. Re-checks auth, then per document: `DOCUMENTS[doc].validate` with the rules injected server-side → snapshot the previous blob to `<doc>-versions/<ISO>.json` (newest 20 kept; a blank blob is not snapshotted) → conditional write of `<doc>.json` against the etag read alongside it (a racing save gets 409, never a silent overwrite) → POST the site's `/admin/api/revalidate` with the caller's Authorization header (non-fatal; the response says `revalidated`). Absent and blank blobs both answer `source: 'seed'` with the default. Stores open with `consistency: 'strong'`
+- `netlify/functions/admin-images.mts` — `/admin/api/images` (list with `usedBy`, multipart upload: JPEG magic bytes, ≤ 2 MB, dimensions ≤ 8000) and `/admin/api/images/:id` (serve for the editor preview; delete, refused with 409 while any saved document references the id). The browser downscales to ≤ 1600 px JPEG before upload (`src/components/admin/image-resize.ts`), so the function never decodes images
+- `netlify/functions/uploads.mts` — public `GET /images/uploads/:id`: streams the blob with `Cache-Control`/`Netlify-CDN-Cache-Control: public, max-age=31536000, immutable`; 404 when missing, 400 for a malformed id
+- `netlify/plugins/refresh-content/` — build plugin whose `onSuccess` asks the deploy that just went live to revalidate, with Basic auth from the build environment; never fails the build (the 60-second ISR window catches up on the first visit if it can't)
+- `src/components/admin/` — the editors' client tree. `use-document-editor.ts` is the generic core (load + mode `live | seed | offline | expired | error`, rules fetch, localStorage draft autosave + resume prompt, undo/redo reducer from `editor-state.ts`, publish/restore flows, status, confirms) and `DocumentEditorFrame.tsx` the chrome around it; its top doc comment is the contract for building a screen on it. `MenuEditor.tsx` (bespoke fields from `menu-ops.ts`, `SectionEditor`, …; the `page` block's "Good to know" card is `SchemaFields` with `basePath="page"`, so its ids match the validator's `page.…` paths) and `PageEditor.tsx` (`SchemaFields.tsx` drawn from the spec, `PhotoField.tsx`, an iframe preview via `previews/PreviewHost.tsx` → `/admin/preview/<doc>/`, so the page lays out at phone width) are the two screens; `PhotoLibrary.tsx` backs `/admin/photos/`. `api.ts` never throws — a missing API is an expected state and the editor degrades to read-only (`offline` under plain `next dev`). Client-side validation is the same registry `validate`, with rules fetched from `/admin/api/rules` or `null`. Field ids follow the validator's path labels (`field-<path>`) so issues can focus their field
+
+### Runtime consequences
+
+- `trailingSlash: true` — write internal links with trailing slashes (`/menu/`); `revalidatePath` takes them without
+- `images: { unoptimized: true }` — every `next/image` needs explicit `width`/`height`; committed images ship pre-sized, and uploads carry their size in the document
+- Fonts are self-hosted via `next/font`: Fraunces (headings), Nunito (body)
+- Components in `src/components/` are server components by default; the only client JS on the public pages is the header navigation — the small-screen disclosure (`MobileNav`) and the wide-screen current-page state (`NavLinks`), both on `usePathname`. The admin editors are the other client tree, loaded only on `/admin/` routes
+- Anything that imports `@netlify/blobs` (`src/lib/server/`) is server-only; never import it from a component that could end up in a client bundle
+
+### Design tokens
+
+Tailwind v4 `@theme` variables in `src/app/globals.css` (`--color-cream`, `--color-bark`, `--color-blueberry`, `--color-fireweed`, `--color-wheat`, …). Body text is bark on cream; buttons are blueberry or fireweed with white text. Never set wheat text on cream — it fails WCAG AA. The blueberry and cream hex values are repeated as literals in `src/app/manifest.ts`, the root layout's `viewport.themeColor`, and `THEME_COLOR`/`BACKGROUND_COLOR` in the verify script — change all four together.
+
+**Images**: `assets/logo.jpg` is the only raster source in the repo. Everything else is typography, CSS, and inline SVG. Owner photos arrive only through the admin editors; `PhotoSlot` renders them or the placeholder.
+
+## Content rules (verify-enforced; from docs/BRIEF.md)
+
+- The business is a **cafe / eatery / bakery-cafe**. These words are banned everywhere — copy, metadata, alt text, JSON-LD, code comments, README: *food truck, truck, trailer, mobile, cart, van, wheels, pop-up*. For "mobile" say "phone" (device) or "on small screens" (responsive). The only exception is code identifiers that never render, e.g. the `MobileNav` component name. `verify` scans `src/` and `README.md` as well as the rendered pages; inside `src/`, only `content-rules.json` may spell the words out (files outside it — `docs/`, `PRODUCT.md`, this file, the verify script — are not scanned).
+- The name is always **Native WILDFlour** — exact casing, never "Wildflour".
+- The phone is **+1 907-612-0002** everywhere. Never publish 612-0303 (a wrong third-party listing).
+- **Never invent**: prices (copy says prices are posted at the counter), an email address, a street number, season dates, awards, ratings, review counts, social links other than Facebook, or menu items not in the brief.
+- Bannock is described respectfully and in general terms — no attribution to a specific tribe, no historical claims.
+- No photos scraped from Facebook, Yelp, or any listing. Real photos come only from the owner.
+- Tone: warm, genuine, small-town Alaska. Short paragraphs, no emoji in body copy, American English.

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "intro": "Everything is made fresh daily. The savory lunch specials rotate and often sell out, so come early. Prices are posted at the counter — ask at the window for today’s specials.",
+  "specialsNote": "Check our Facebook page for today’s lunch special.",
+  "page": {
+    "eyebrow": "Fresh every day",
+    "specialsTitle": "Today’s special",
+    "specialsLead": "The savory bannock special is different most days.",
+    "sectionsTitle": "What we serve",
+    "goodToKnow": {
+      "eyebrow": "Before you order",
+      "title": "Good to know",
+      "notes": [
+        {
+          "icon": "flame",
+          "title": "Made fresh daily",
+          "body": "Bannock is fried to order, and the house-baked cookies and muffins change from day to day."
+        },
+        {
+          "icon": "timer",
+          "title": "Specials sell out",
+          "body": "The savory bannock lunch special rotates and often sells out, so come early if you have your heart set on it."
+        },
+        {
+          "icon": "bag",
+          "title": "Made to go",
+          "body": "We are a grab-and-go spot: order at the window and take it with you."
+        }
+      ]
+    }
+  },
+  "sections": [
+    {
+      "id": "bannock",
+      "name": "Alaskan Bannock",
+      "description": "Fresh fried bread from a passed-down family recipe, made to order.",
+      "items": [
+        {
+          "name": "Alaskan Bannock",
+          "description": "One golden piece, fried when you order it — then pick a topping below."
+        }
+      ],
+      "toppings": ["Butter", "Strawberry jam", "Powdered sugar", "Nutella", "Honey", "Homemade rhubarb jam"]
+    },
+    {
+      "id": "lunch-specials",
+      "name": "Savory Bannock Lunch Specials",
+      "description": "A different savory bannock most days. They often sell out, so come early.",
+      "items": [
+        {
+          "name": "Native Bannock with sausage, green onions & cheddar",
+          "description": "One example of the savory specials that rotate daily."
+        }
+      ]
+    },
+    {
+      "id": "baked-goods",
+      "name": "House-Baked Goods",
+      "description": "Baked in-house and rotating daily.",
+      "items": [
+        { "name": "Homemade cookies", "description": "Baked fresh — M&M cookies, for example." },
+        { "name": "Muffins", "description": "Baked fresh — poppy seed, for example." }
+      ]
+    },
+    {
+      "id": "coffee-and-tea",
+      "name": "Coffee & Tea",
+      "description": "Alaska-roasted coffee and hot tea for a misty Skagway morning.",
+      "items": [
+        { "name": "Kaladi Brothers drip coffee", "description": "Alaska-roasted coffee, brewed fresh." },
+        { "name": "Hot tea", "description": "Your choice of tea." }
+      ]
+    },
+    {
+      "id": "cold-drinks",
+      "name": "Cold Drinks",
+      "highlight": false,
+      "items": [
+        { "name": "Tiki Breeze", "description": "An iced, fruity refresher." },
+        { "name": "Bottled water", "description": "Cold and ready to go." },
+        { "name": "Coke" },
+        { "name": "Diet Coke" },
+        { "name": "Sprite" }
+      ]
+    }
+  ]
+}
