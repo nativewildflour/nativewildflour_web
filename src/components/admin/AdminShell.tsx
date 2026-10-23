@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import { Container } from '@/components/Container';
@@ -31,7 +30,12 @@ export function AdminShell({ children }: AdminShellProps) {
                 Admin
               </span>
             </div>
-            <Link
+            {/* A plain link on purpose: a full page load always asks the server, so right after a
+                publish the owner sees the new page. `next/link` would keep the statically rendered
+                page in the client cache for minutes (prefetched or not), and its in-app navigation
+                would also skip the unsaved-changes prompt. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- see above */}
+            <a
               href="/"
               className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 font-bold text-blueberry no-underline transition-colors duration-200 hover:text-blueberry-deep"
             >
@@ -50,7 +54,7 @@ export function AdminShell({ children }: AdminShellProps) {
                 <path d="M14 6l-6 6 6 6" />
               </svg>
               Back to site
-            </Link>
+            </a>
           </div>
         </Container>
       </div>

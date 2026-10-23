@@ -9,10 +9,11 @@
  */
 
 // Deno needs the literal `.ts` extension here; tsconfig's `allowImportingTsExtensions` permits it.
-import { checkBasicAuth, unauthorized } from '../shared/basic-auth.ts';
+import { checkBasicAuth, isSupersededDeploy, unauthorized } from '../shared/basic-auth.ts';
+import type { DeployContext } from '../shared/basic-auth.ts';
 
-/** The one piece of Netlify's edge `context` this guard uses — not worth a dependency. */
-interface Context {
+/** The pieces of Netlify's edge `context` this guard uses — not worth a dependency. */
+interface Context extends DeployContext {
   next(): Promise<Response>;
 }
 
@@ -25,6 +26,15 @@ export default async function adminAuth(
   request: Request,
   context: Context,
 ): Promise<Response> {
+  // An older production deploy keeps the credentials it was built with: after a password change
+  // its permalink would still let the old password in, so the admin exists on the live deploy only.
+  if (isSupersededDeploy(context)) {
+    return new Response('Not found.', {
+      status: 404,
+      headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
+
   const username = Netlify.env.get('ADMIN_USERNAME') ?? '';
   const password = Netlify.env.get('ADMIN_PASSWORD') ?? '';
 

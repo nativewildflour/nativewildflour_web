@@ -1,11 +1,15 @@
 'use client';
 
-import { IconButton } from '@/components/admin/buttons';
+import { useState } from 'react';
+
+import { ActionButton, IconButton } from '@/components/admin/buttons';
 import { TextField } from '@/components/admin/fields';
 import type { MenuItemContent } from '@/lib/menu-content';
 
 export interface SectionOption {
   readonly index: number;
+  /** The section's permanent id — what a chosen move target is remembered by. */
+  readonly id: string;
   readonly name: string;
 }
 
@@ -39,6 +43,23 @@ export function ItemEditor({
   const label = item.name.trim() || `item ${itemIndex + 1}`;
   const moveSelectId = `move-item-${sectionIndex}-${itemIndex}`;
   const targets = sectionOptions.filter((option) => option.index !== sectionIndex);
+  /**
+   * The section picked in the select, by id. Picking only chooses — the Move button moves: on
+   * Windows an arrow key on a closed select fires `change`, so a select that acted on its own
+   * would move the item while a keyboard user was still reading the options. By id, not index,
+   * so a reorder or a deletion between the pick and the press can't send it somewhere else; a
+   * pick whose section has gone (or is now this one) reads as no pick at all.
+   */
+  const [targetId, setTargetId] = useState('');
+  const target = targets.find((option) => option.id === targetId);
+
+  function moveToTarget() {
+    if (target === undefined) return;
+    // Rows are keyed by position, so the item that slides into this slot would otherwise
+    // inherit the pick.
+    setTargetId('');
+    onMoveToSection(target.index);
+  }
 
   return (
     <li className="rounded-2xl border border-bark/10 bg-cream/60 p-3">
@@ -81,28 +102,34 @@ export function ItemEditor({
       </div>
 
       {targets.length > 0 ? (
-        <div className="mt-2">
+        <div className="mt-2 flex items-center gap-2">
           <label htmlFor={moveSelectId} className="sr-only">
             {`Move ${label} to another section`}
           </label>
           <select
             id={moveSelectId}
-            value=""
-            onChange={(event) => {
-              const target = Number(event.target.value);
-              if (!Number.isNaN(target)) onMoveToSection(target);
-            }}
-            className="w-full cursor-pointer rounded-xl border border-bark/20 bg-snow px-3 py-1.5 text-sm font-semibold text-bark/80 shadow-press transition-colors duration-150 hover:border-bark/35"
+            value={target === undefined ? '' : target.id}
+            onChange={(event) => setTargetId(event.target.value)}
+            className="min-h-11 min-w-0 flex-1 cursor-pointer rounded-xl border border-bark/20 bg-snow px-3 py-1.5 text-sm font-semibold text-bark/80 shadow-press transition-colors duration-150 hover:border-bark/35"
           >
             <option value="" disabled>
               Move to another section…
             </option>
             {targets.map((option) => (
-              <option key={option.index} value={option.index}>
+              <option key={option.index} value={option.id}>
                 {option.name.trim() || `Section ${option.index + 1}`}
               </option>
             ))}
           </select>
+          <ActionButton
+            variant="secondary"
+            size="sm"
+            disabled={target === undefined}
+            ariaLabel={`Move ${label} to the chosen section`}
+            onClick={moveToTarget}
+          >
+            Move
+          </ActionButton>
         </div>
       ) : null}
     </li>

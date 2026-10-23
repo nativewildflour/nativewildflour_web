@@ -1,11 +1,6 @@
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { JsonLd } from '@/components/JsonLd';
-import { DirectionsArriving } from '@/components/directions/DirectionsArriving';
-import { DirectionsDocks } from '@/components/directions/DirectionsDocks';
-import { DirectionsFaq } from '@/components/directions/DirectionsFaq';
-import { DirectionsIntro } from '@/components/directions/DirectionsIntro';
-import { DirectionsOrientation } from '@/components/directions/DirectionsOrientation';
-import { DirectionsTips } from '@/components/directions/DirectionsTips';
+import { DirectionsSections } from '@/components/directions/DirectionsSections';
 import type { BreadcrumbItem } from '@/lib/schema';
 import { breadcrumbSchema, faqSchema } from '@/lib/schema';
 import { buildMetadata } from '@/lib/seo';
@@ -37,15 +32,10 @@ export default async function DirectionsPage() {
         data={[breadcrumbSchema(BREADCRUMBS), faqSchema(directions.faq.items)]}
       />
 
-      <DirectionsIntro content={directions.intro}>
-        <Breadcrumbs items={BREADCRUMBS} />
-      </DirectionsIntro>
-
-      <DirectionsOrientation content={directions.orientation} />
-      <DirectionsDocks content={directions.docks} shuttle={directions.shuttle} />
-      <DirectionsArriving content={directions.arriving} />
-      <DirectionsTips content={directions.tips} />
-      <DirectionsFaq content={directions.faq} />
+      <DirectionsSections
+        directions={directions}
+        breadcrumbs={<Breadcrumbs items={BREADCRUMBS} />}
+      />
     </>
   );
 }

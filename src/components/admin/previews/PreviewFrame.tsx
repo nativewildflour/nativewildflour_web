@@ -2,9 +2,11 @@
 
 import type { ReactNode } from 'react';
 
-/** The admin preview reads photos from the auth-gated endpoint: uploads only land in
- *  `public/images/uploads/` when the site is built, so nothing else can serve them yet. */
-export const PREVIEW_IMAGE_BASE = '/admin/api/images';
+import { IMAGES_ENDPOINT } from '@/components/admin/api';
+
+/** The admin preview reads photos from the auth-gated endpoint, so everything the editor loads
+ *  stays inside the signed-in section (and is cached privately in that browser only). */
+export const PREVIEW_IMAGE_BASE = IMAGES_ENDPOINT;
 
 export interface PreviewFrameProps {
   /** Names the page being previewed, e.g. "The home page". */

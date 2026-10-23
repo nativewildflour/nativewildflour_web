@@ -18,6 +18,13 @@ export interface ConfirmDialogProps {
   readonly onCancel: () => void;
   /** Escape / overlay click. Defaults to `onCancel`; pass separately when dismiss ≠ cancel. */
   readonly onDismiss?: () => void;
+  /**
+   * The id of the element focus goes to on close when the control that opened the dialog can't
+   * take it back — gone along with what it acted on, or turned off by the very action confirmed
+   * (a publish disables its own button while it runs). Best: where the outcome will be reported.
+   * Without one, or when it isn't on the page, the page's main heading takes focus.
+   */
+  readonly fallbackFocusId?: string;
 }
 
 const FOCUSABLE =
@@ -25,9 +32,41 @@ const FOCUSABLE =
   'select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
+ * Focus back on `opener` — or, when it can't take it (disabled, removed, inert: `focus()` then
+ * quietly does nothing), somewhere sensible instead of nowhere at all.
+ */
+function returnFocus(opener: HTMLElement | null, fallbackId: string | undefined): void {
+  if (opener !== null) {
+    opener.focus();
+    if (document.activeElement === opener) return;
+  }
+  // Whoever closed the dialog may be about to place focus themselves — an editor moving it to
+  // the row that slid into a deleted one's place (`focusSoon` runs on the next frame). So this
+  // waits a frame too, and rescues only a focus still left on nothing.
+  window.requestAnimationFrame(() => {
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    const target =
+      (fallbackId === undefined ? null : document.getElementById(fallbackId)) ??
+      document.querySelector<HTMLElement>('main h1') ??
+      document.querySelector<HTMLElement>('main');
+    if (target === null) return;
+    // A heading or a wrapper only takes focus from script once it has a tabindex.
+    if (!target.hasAttribute('tabindex') && target.tabIndex < 0) {
+      target.setAttribute('tabindex', '-1');
+    }
+    // No scroll: the page stays where the owner left it; a status that follows brings itself
+    // into view.
+    target.focus({ preventScroll: true });
+  });
+}
+
+/**
  * The custom confirmation modal — the editor never calls `window.confirm`/`alert`.
  * Accessibility contract: `role="dialog"` + `aria-modal`, focus moves in on open, Tab is
- * trapped inside, Escape dismisses, and focus returns to the opening control on close.
+ * trapped inside, Escape dismisses, and focus returns to the opening control on close — or,
+ * when that control can no longer take it, to `fallbackFocusId` or the page's main heading
+ * (see `returnFocus`).
  */
 export function ConfirmDialog({
   open,
@@ -39,6 +78,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   onDismiss,
+  fallbackFocusId,
 }: ConfirmDialogProps) {
   const titleId = useId();
   const bodyId = useId();
@@ -52,11 +92,18 @@ export function ConfirmDialog({
   useEffect(() => {
     dismissRef.current = dismiss;
   }, [dismiss]);
+  // Same for the fallback, read only as the dialog closes.
+  const fallbackRef = useRef(fallbackFocusId);
+  useEffect(() => {
+    fallbackRef.current = fallbackFocusId;
+  }, [fallbackFocusId]);
 
   useEffect(() => {
     if (!open) return;
 
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Nothing focused reads as `body` — no opener to go back to (the draft prompt opens on load).
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && active !== document.body ? active : null;
     // Danger dialogs land focus on the safe option; plain confirms on the primary action.
     const initialHost = tone === 'danger' ? cancelRef.current : confirmRef.current;
     initialHost?.querySelector('button')?.focus();
@@ -92,7 +139,7 @@ export function ConfirmDialog({
     return () => {
       document.removeEventListener('keydown', onKeyDown, true);
       document.body.style.overflow = previousOverflow;
-      opener?.focus();
+      returnFocus(opener, fallbackRef.current);
     };
   }, [open, tone]);
 

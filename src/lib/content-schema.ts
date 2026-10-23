@@ -14,11 +14,12 @@
  * usable document, so the editor can show the draft while refusing to publish it.
  *
  * Runs in the build, the admin client bundle and the Netlify Functions, so: no dependencies, no
- * Node APIs, no JSON imports, relative import specifiers only. (The one fact it reads,
- * `SEASON_NOTE`, comes from `business.ts`, which imports nothing.)
+ * Node APIs, no JSON imports, relative import specifiers only. (The two facts it reads,
+ * `HOURS_SUMMARY` and `SEASON_NOTE` — what the `{hours}` and `{season}` tokens print — come from
+ * `business.ts`, which imports nothing.)
  */
 
-import { SEASON_NOTE } from '../data/business';
+import { HOURS_SUMMARY, SEASON_NOTE } from '../data/business';
 import { IMAGE_ID, MAX_IMAGE_DIMENSION } from './content/images';
 import type { ContentRules, CopyIssue, RuleChecks } from './copy-rules';
 import {
@@ -139,8 +140,11 @@ export interface DocumentSpec {
 /** Extra document-level checks a field spec cannot express (cross-field rules, page contracts). */
 export type ExtraChecks<T> = (document: T) => readonly CopyIssue[];
 
-/** Typos in field names must fail loudly rather than silently dropping content. */
-function rejectUnknownKeys(
+/**
+ * Typos in field names must fail loudly rather than silently dropping content. Exported for the
+ * menu's bespoke walk (`menu-content.ts`), so both documents word the failure the same way.
+ */
+export function rejectUnknownKeys(
   owner: Record<string, unknown>,
   allowed: readonly string[],
   path: string,
@@ -153,6 +157,31 @@ function rejectUnknownKeys(
         message: 'unknown field — remove it',
       });
     }
+  }
+}
+
+/**
+ * The envelope every stored document shares: `version` (always 1), an optional `updatedAt`
+ * publish stamp, and no top-level key besides those two and the document's own `fields`. Shared
+ * with the menu's bespoke walk so no document can drift from the others on it.
+ */
+export function envelopeIssues(
+  value: Record<string, unknown>,
+  fields: readonly string[],
+  issues: CopyIssue[],
+): void {
+  rejectUnknownKeys(value, ['version', 'updatedAt', ...fields], '', issues);
+  if (value.version !== 1) {
+    issues.push({ path: 'version', message: `expected the number 1, got ${describe(value.version)}` });
+  }
+  if (
+    value.updatedAt !== undefined &&
+    (typeof value.updatedAt !== 'string' || Number.isNaN(Date.parse(value.updatedAt)))
+  ) {
+    issues.push({
+      path: 'updatedAt',
+      message: `expected an ISO 8601 date-time string, got ${describe(value.updatedAt)}`,
+    });
   }
 }
 
@@ -295,19 +324,7 @@ function collectStructuralIssues(value: unknown, spec: DocumentSpec): CopyIssue[
     return issues;
   }
 
-  rejectUnknownKeys(value, ['version', 'updatedAt', ...Object.keys(spec.fields)], '', issues);
-  if (value.version !== 1) {
-    issues.push({ path: 'version', message: `expected the number 1, got ${describe(value.version)}` });
-  }
-  if (
-    value.updatedAt !== undefined &&
-    (typeof value.updatedAt !== 'string' || Number.isNaN(Date.parse(value.updatedAt)))
-  ) {
-    issues.push({
-      path: 'updatedAt',
-      message: `expected an ISO 8601 date-time string, got ${describe(value.updatedAt)}`,
-    });
-  }
+  envelopeIssues(value, Object.keys(spec.fields), issues);
 
   for (const [key, field] of Object.entries(spec.fields)) {
     structuralField(value[key], key, field, issues);
@@ -351,11 +368,12 @@ function copyField(
 ): void {
   switch (field.kind) {
     case 'text': {
-      // A string after the structural walk — except an absent optional field in a value that
-      // was never filled (the menu's page wording is walked field by field), which reads as blank.
+      // A string after the structural walk, and the fill (`withOptionalFilled`,
+      // `fieldWithOptionalFilled`); anything else reads as blank rather than throwing.
       const text = typeof value === 'string' ? value : '';
       scanText(text, path, issues, rules, {
         hoursToken: field.hoursToken === true,
+        ...(field.hoursToken === true ? { hoursSummary: HOURS_SUMMARY } : {}),
         ...(field.seasonToken === true ? { seasonNote: SEASON_NOTE } : {}),
       });
       if (field.optional !== true && isBlank(text)) {
@@ -467,6 +485,16 @@ export function fieldCopyIssues(
   const issues: CopyIssue[] = [];
   copyField(value, path, field, issues, rules);
   return issues;
+}
+
+/**
+ * The fill of one described field — the third companion, for the same kind of part: a value
+ * that passed `fieldStructureIssues`, with every absent optional text field below it filled in
+ * as `''`, exactly as `parseWithSpec` fills a spec document. Same object back when nothing was
+ * missing.
+ */
+export function fieldWithOptionalFilled(value: unknown, field: FieldSpec): unknown {
+  return fillField(value, field);
 }
 
 /** One field's value with every absent optional text field below it filled in as `''`. */

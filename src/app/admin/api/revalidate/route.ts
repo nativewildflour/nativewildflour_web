@@ -3,9 +3,10 @@
  *
  * The four public pages are cached renders with a 60-second window (`revalidate = 60`). That
  * window alone would mean the owner watches her own change for up to a minute, so the content
- * API calls this endpoint the moment a save lands: it marks each page (and the sitemap) stale,
- * and the next visitor gets a fresh render read from the store. The deploy plugin calls it once
- * after a deploy goes live, for the same reason.
+ * API calls this endpoint the moment a save lands: it marks the pages that show the saved
+ * document (and the sitemap) stale, and the next visitor gets a fresh render read from the
+ * store. The deploy plugin calls it once after a deploy goes live, for every page, for the same
+ * reason.
  *
  * The edge guard already Basic-auths everything under `/admin`, and this handler checks again.
  * That is not belt-and-braces for its own sake: a route handler is a real endpoint inside the
@@ -16,41 +17,47 @@
 
 import { revalidatePath } from 'next/cache';
 
-import { NAV_LINKS } from '@/data/nav';
+import { PAGE_DOCUMENTS, pagesShowing } from '@/data/pages';
+import type { PublicPath } from '@/data/pages';
+import { isDocumentKey } from '@/lib/content-docs';
 
-import { checkBasicAuth, unauthorized } from '../../../../../netlify/shared/basic-auth';
+import { guardAdmin } from '../../../../../netlify/shared/admin-gate';
 import { guardWrite } from '../../../../../netlify/shared/request-guard';
 
 /** Auth is read per request, so this handler must never be cached or prerendered. */
 export const dynamic = 'force-dynamic';
 
 /**
- * The public pages are the primary navigation, so the list comes from `NAV_LINKS` and a new page
- * is refreshed as soon as it is linked. Trailing slashes come off (except on `/`):
- * `revalidatePath` addresses the route file structure, in which the `(site)` group and the
- * `trailingSlash` setting do not appear. The sitemap rides along because each page's `lastmod`
- * is the newest publish stamp among its documents.
+ * A public page as `revalidatePath` addresses it: the route file structure, in which the `(site)`
+ * group and the `trailingSlash` setting do not appear — so the trailing slash comes off (except on
+ * `/`).
  */
-const PATHS: readonly string[] = [
-  ...NAV_LINKS.map(({ href }) => (href === '/' ? href : href.replace(/\/+$/, ''))),
-  '/sitemap.xml',
-];
+const routeOf = (path: PublicPath): string => (path === '/' ? path : path.replace(/\/+$/, ''));
+
+/**
+ * `?doc=<doc>` (the content function, after a publish or restore): the pages that render that
+ * document (`PAGE_DOCUMENTS`). No document (the deploy plugin, after a deploy): every public page.
+ * The sitemap rides along either way, because each page's `lastmod` is the newest publish stamp
+ * among its documents.
+ */
+function pathsFor(doc: string | null): string[] {
+  const pages =
+    doc !== null && isDocumentKey(doc)
+      ? pagesShowing(doc)
+      : (Object.keys(PAGE_DOCUMENTS) as PublicPath[]);
+  return [...pages.map(routeOf), '/sitemap.xml'];
+}
 
 export async function POST(request: Request): Promise<Response> {
-  const username = process.env.ADMIN_USERNAME ?? '';
-  const password = process.env.ADMIN_PASSWORD ?? '';
-  if (username === '' || password === '') {
-    return Response.json({ ok: false, error: 'Admin is not configured.' }, { status: 503 });
-  }
-  if (!checkBasicAuth(request.headers.get('authorization'), username, password)) {
-    return unauthorized();
-  }
+  const unauthorizedAnswer = guardAdmin(request);
+  if (unauthorizedAnswer !== null) return unauthorizedAnswer;
   // Same-origin only. Its legitimate callers — the content function and the deploy plugin —
   // send no Origin and no body, so only the origin is checked.
   const refused = guardWrite(request, null);
   if (refused !== null) return refused;
 
-  for (const path of PATHS) revalidatePath(path);
+  const paths = pathsFor(new URL(request.url).searchParams.get('doc'));
+  for (const path of paths) revalidatePath(path);
 
-  return Response.json({ ok: true, paths: PATHS });
+  return Response.json({ ok: true, paths });
 }

@@ -19,7 +19,7 @@ import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { DocumentKey, ImageRecord, ImagesResult } from '@/components/admin/api';
-import { deleteImage, imagePreviewUrl, listImages, uploadImage } from '@/components/admin/api';
+import { deleteImage, imageThumbnailUrl, listImages, uploadImage } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 import { resizeImage } from '@/components/admin/image-resize';
@@ -33,6 +33,8 @@ import { StatusBanner } from '@/components/admin/StatusBanner';
 import type { StatusMessage } from '@/components/admin/StatusBanner';
 
 const SIGN_IN_EXPIRED = 'Your sign-in expired — reload the page.';
+/** The status banner's wrapper — where focus lands after a confirmed delete (see `ConfirmDialog`). */
+const LIBRARY_STATUS_ID = 'library-status';
 
 type LibraryState =
   | { readonly kind: 'loading' }
@@ -89,7 +91,7 @@ export function PhotoLibrary() {
   // loading panel — and the cancel flag keeps a Strict Mode double-mount from answering twice.
   useEffect(() => {
     let cancelled = false;
-    void listImages().then((result) => {
+    void listImages({ history: true }).then((result) => {
       if (!cancelled) setState(toState(result));
     });
     return () => {
@@ -99,7 +101,7 @@ export function PhotoLibrary() {
 
   /** Fetch again in place — after a refused delete, when the list is known to be stale. */
   function reload() {
-    void listImages().then((result) => setState(toState(result)));
+    void listImages({ history: true }).then((result) => setState(toState(result)));
   }
 
   /** "Try again" — unlike the first load, this one has a panel to replace, so it says so. */
@@ -212,7 +214,11 @@ export function PhotoLibrary() {
         />
       </section>
 
-      <StatusBanner className="mt-4" status={status} onDismiss={() => setStatus(null)} />
+      {/* Takes focus when a confirmed delete leaves the dialog nothing to return it to: the
+          outcome is reported right here. */}
+      <div id={LIBRARY_STATUS_ID} tabIndex={-1} className="mt-4">
+        <StatusBanner status={status} onDismiss={() => setStatus(null)} />
+      </div>
 
       <section aria-labelledby="library-heading" className="mt-6">
         <h2 id="library-heading" className="text-xl font-black text-bark">
@@ -258,7 +264,7 @@ export function PhotoLibrary() {
                   className="rounded-3xl bg-snow p-4 shadow-card ring-1 ring-bark/10"
                 >
                   <Image
-                    src={imagePreviewUrl(image.id)}
+                    src={imageThumbnailUrl(image.id)}
                     alt=""
                     width={image.width}
                     height={image.height}
@@ -322,6 +328,7 @@ export function PhotoLibrary() {
           if (image) void doDelete(image);
         }}
         onCancel={() => setPendingDelete(null)}
+        fallbackFocusId={LIBRARY_STATUS_ID}
       >
         {pendingDelete
           ? `“${pendingDelete.originalName === '' ? pendingDelete.id : pendingDelete.originalName}” is removed from the photo store for good. Nothing on the site uses it, and this cannot be undone.`

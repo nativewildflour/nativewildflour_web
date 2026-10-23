@@ -23,9 +23,10 @@
  *   - a plain proxy to `next dev` (spawned here, on its own port) for every other request,
  *     WebSocket upgrades included so hot reload keeps working.
  *
- * `URL` points back at this server, so a publish makes the same refresh call it makes on
- * Netlify: the content function POSTs `/admin/api/revalidate`, which is proxied through to
- * Next with the owner's credentials, and the editor reports `revalidated: true`. Under
+ * The content function refreshes the origin its own request reached — this server — so a
+ * publish makes the same refresh call it makes on Netlify: it POSTs `/admin/api/revalidate`,
+ * which is proxied through to Next with the owner's credentials, and the editor reports
+ * `revalidated: true`. Under
  * `next dev` every request renders fresh anyway; set `DEV_ADMIN_NEXT=start` after
  * `npm run build` to run the built site instead and watch the ISR cache actually refresh.
  */
@@ -36,7 +37,7 @@ import { createRequire } from 'node:module';
 import { register } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { BlobsServer } from '@netlify/blobs/server';
 
@@ -44,46 +45,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
-// Loader hook — identical to scripts/smoke-admin.mjs; see the note there.
+// Loader hook — shared with the smoke harness and the gate; see ./ts-resolve-hook.mjs.
 // ---------------------------------------------------------------------------
 
-const LOADER = `
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-const SRC = ${JSON.stringify(`${pathToFileURL(path.join(ROOT, 'src')).href}/`)};
-const EXTENSIONS = ['.ts', '.mts', '.tsx', '/index.ts', '/index.mts', '/index.tsx'];
-
-/** The URL a specifier really points at, once a missing extension is filled in. */
-function withExtension(url) {
-  if (existsSync(fileURLToPath(url))) return url;
-  for (const extension of EXTENSIONS) {
-    const candidate = new URL(url.href + extension);
-    if (existsSync(fileURLToPath(candidate))) return candidate;
-  }
-  return null;
-}
-
-export async function resolve(specifier, context, nextResolve) {
-  if (specifier.endsWith('.json')) {
-    return { ...(await nextResolve(specifier, context)), importAttributes: { type: 'json' } };
-  }
-  if (specifier.startsWith('@/')) {
-    const resolved = withExtension(new URL(specifier.slice(2), SRC));
-    if (resolved) return nextResolve(resolved.href, context);
-  }
-  if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
-    const direct = new URL(specifier, context.parentURL);
-    if (!existsSync(fileURLToPath(direct))) {
-      const resolved = withExtension(direct);
-      if (resolved) return nextResolve(resolved.href, context);
-    }
-  }
-  return nextResolve(specifier, context);
-}
-`;
-
-register(`data:text/javascript,${encodeURIComponent(LOADER)}`);
+register('./ts-resolve-hook.mjs', import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -97,7 +62,8 @@ const BLOBS_DIR = path.join(ROOT, '.netlify', 'dev-blobs');
 
 process.env.ADMIN_USERNAME = USERNAME;
 process.env.ADMIN_PASSWORD = PASSWORD;
-// A publish here must never reach a real site: the refresh call comes back to this server.
+// The pages' canonical and Open Graph URLs (`src/lib/site.ts` reads `URL`) name this server,
+// not a real deploy. The refresh call needs nothing from here: it goes to the request's origin.
 delete process.env.DEPLOY_PRIME_URL;
 process.env.URL = `http://localhost:${PORT}`;
 

@@ -11,103 +11,44 @@ import { imageSrc, imageSrcSet } from '@/lib/content/images';
  * this renders a tasteful dashed frame with the logo badge in the middle so the layout
  * already reserves the space a photo will occupy.
  *
- * There are two ways to fill it, and both keep the caption doing double duty as the visible
- * caption and the alt text:
- *
- *   - `photo` — a slot from a content document. The owner uploads a picture in the admin
- *     editor and it appears here once she publishes; nothing in the code changes. A photo wider
- *     than 800px also offers its 800px copy in `srcset`. `imageBase` points the `src`
- *     somewhere other than the live site's uploads endpoint (the admin preview reads the
- *     auth-gated image endpoint instead, full size, with no `srcset`).
- *   - `src` plus the file's true pixel `width`/`height` — for a picture committed to
- *     `public/images/`, already cropped and resized. The export is unoptimized, so a photo
- *     without its real dimensions would ship unsized and shift the layout.
+ * The slot belongs to a content document: the owner uploads a picture in the admin editor and
+ * it appears here once she publishes; nothing in the code changes. The caption does double duty
+ * as the visible caption and the alt text. A photo wider than 800px also offers its 800px copy
+ * in `srcset`. Uploads carry their pixel size in the document, so the frame is sized before
+ * the bytes arrive (`images.unoptimized` means nothing else would size it).
  */
 
-const ASPECTS = {
-  '4/3': 'aspect-[4/3]',
-  '3/2': 'aspect-[3/2]',
-  '1/1': 'aspect-square',
-} as const;
+/** The reserved space's shape — every slot on the site is 4:3. */
+const ASPECT = 'aspect-[4/3]';
 
-export type PhotoSlotAspect = keyof typeof ASPECTS;
-
-interface PhotoSlotBase {
-  /** Shape of the reserved space. Defaults to `4/3`. */
-  readonly aspect?: PhotoSlotAspect;
-  readonly className?: string;
-}
-
-/** A file committed to `public/`, or nothing yet. `src` always arrives with its dimensions. */
-type PhotoSlotFileProps = PhotoSlotBase & {
-  /** Describes the photo that belongs here — the visible caption, and the alt text once real. */
-  readonly caption: string;
-  readonly photo?: undefined;
-  readonly imageBase?: undefined;
-} & (
-    | { readonly src?: undefined; readonly width?: undefined; readonly height?: undefined }
-    | { readonly src: string; readonly width: number; readonly height: number }
-  );
-
-/** A photo slot owned by a content document — caption and image travel together. */
-type PhotoSlotDocumentProps = PhotoSlotBase & {
+export interface PhotoSlotProps {
+  /** Caption and image travel together, as the document stores them. */
   readonly photo: PhotoContent;
-  /** Where uploaded images are served from. Defaults to the live site's uploads folder. */
+  /**
+   * Where uploaded images are served from. Defaults to the live site's uploads endpoint; the
+   * admin preview reads the auth-gated image endpoint instead (full size, with no `srcset`).
+   */
   readonly imageBase?: string;
-  readonly caption?: undefined;
-  readonly src?: undefined;
-  readonly width?: undefined;
-  readonly height?: undefined;
-};
-
-export type PhotoSlotProps = PhotoSlotFileProps | PhotoSlotDocumentProps;
-
-interface ResolvedPhoto {
-  readonly caption: string;
-  readonly image: {
-    readonly src: string;
-    readonly width: number;
-    readonly height: number;
-    /** Set only for a public upload wider than its 800px copy. */
-    readonly srcSet?: string;
-  } | null;
+  readonly className?: string;
 }
 
 /** Every slot is full width on phones and two fifths of a ≤ 72rem column from `md` up. */
 const SIZES = '(min-width: 768px) min(40vw, 29rem), 100vw';
 
-/** Collapses the two prop forms into the one thing the markup needs. */
-function resolvePhoto(props: PhotoSlotProps): ResolvedPhoto {
-  if (props.photo !== undefined) {
-    const image = props.photo.image;
-    return {
-      caption: props.photo.caption,
-      image:
-        image === null
-          ? null
-          : {
-              src: imageSrc(image, props.imageBase),
-              width: image.width,
-              height: image.height,
-              // The admin preview reads the auth-gated endpoint, which serves the full image
-              // only — so it gets no `srcset`, and shows exactly the bytes that were uploaded.
-              srcSet: props.imageBase === undefined ? imageSrcSet(image) : undefined,
-            },
-    };
-  }
-  return {
-    caption: props.caption,
-    image:
-      props.src === undefined
-        ? null
-        : { src: props.src, width: props.width, height: props.height },
-  };
-}
-
 /** An owner-supplied photograph, or the dashed placeholder holding its space until one arrives. */
-export function PhotoSlot(props: PhotoSlotProps) {
-  const { aspect = '4/3', className = '' } = props;
-  const { caption, image } = resolvePhoto(props);
+export function PhotoSlot({ photo, imageBase, className = '' }: PhotoSlotProps) {
+  const caption = photo.caption;
+  const image =
+    photo.image === null
+      ? null
+      : {
+          src: imageSrc(photo.image, imageBase),
+          width: photo.image.width,
+          height: photo.image.height,
+          // The admin preview reads the auth-gated endpoint, which serves the full image only —
+          // so it gets no `srcset`, and shows exactly the bytes that were uploaded.
+          srcSet: imageBase === undefined ? imageSrcSet(photo.image) : undefined,
+        };
 
   return (
     <figure
@@ -127,7 +68,7 @@ export function PhotoSlot(props: PhotoSlotProps) {
           height={image.height}
           loading="lazy"
           decoding="async"
-          className={`w-full rounded-3xl object-cover shadow-card ${ASPECTS[aspect]}`}
+          className={`w-full rounded-3xl object-cover shadow-card ${ASPECT}`}
         />
       ) : image ? (
         <Image
@@ -137,11 +78,11 @@ export function PhotoSlot(props: PhotoSlotProps) {
           height={image.height}
           // Documents the rendered size; `images.unoptimized` emits no srcset of its own.
           sizes={SIZES}
-          className={`w-full rounded-3xl object-cover shadow-card ${ASPECTS[aspect]}`}
+          className={`w-full rounded-3xl object-cover shadow-card ${ASPECT}`}
         />
       ) : (
         <div
-          className={`flex w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-wood/40 bg-parchment/70 p-6 text-center shadow-card ${ASPECTS[aspect]}`}
+          className={`flex w-full flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-wood/40 bg-parchment/70 p-6 text-center shadow-card ${ASPECT}`}
         >
           {/* Logo watermark. The logo art has a white background, so it sits on a white badge. */}
           <span className="inline-flex items-center justify-center rounded-2xl bg-snow p-2 shadow-sm ring-1 ring-bark/10">

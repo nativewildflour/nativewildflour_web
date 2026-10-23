@@ -43,7 +43,7 @@ import http from 'node:http';
 import { register } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { BlobsServer } from '@netlify/blobs/server';
 import sharp from 'sharp';
@@ -54,53 +54,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Loader hook
 // ---------------------------------------------------------------------------
 
-/**
- * Resolution rules two bundlers apply for free, restated for plain Node: extensionless
- * specifiers get a TypeScript extension, `.json` specifiers get the import attribute Node
- * requires, and `@/` resolves to `src/` — Netlify's function bundler supplies the first two for
- * `netlify/**`, and Next supplies all three for `src/lib/server/content.ts`, which the page
- * loader scenarios import directly. Nothing here names a module format: letting Node work it out
- * costs one `MODULE_TYPELESS_PACKAGE_JSON` warning per TypeScript file and keeps the hook off
- * internal format strings, which is the right trade for a script that has to run on the Node 22
- * the deploy pins as well as on whatever a developer has installed.
- */
-const LOADER = `
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-
-const SRC = ${JSON.stringify(`${pathToFileURL(path.join(ROOT, 'src')).href}/`)};
-const EXTENSIONS = ['.ts', '.mts', '.tsx', '/index.ts', '/index.mts', '/index.tsx'];
-
-/** The URL a specifier really points at, once a missing extension is filled in. */
-function withExtension(url) {
-  if (existsSync(fileURLToPath(url))) return url;
-  for (const extension of EXTENSIONS) {
-    const candidate = new URL(url.href + extension);
-    if (existsSync(fileURLToPath(candidate))) return candidate;
-  }
-  return null;
-}
-
-export async function resolve(specifier, context, nextResolve) {
-  if (specifier.endsWith('.json')) {
-    return { ...(await nextResolve(specifier, context)), importAttributes: { type: 'json' } };
-  }
-  if (specifier.startsWith('@/')) {
-    const resolved = withExtension(new URL(specifier.slice(2), SRC));
-    if (resolved) return nextResolve(resolved.href, context);
-  }
-  if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
-    const direct = new URL(specifier, context.parentURL);
-    if (!existsSync(fileURLToPath(direct))) {
-      const resolved = withExtension(direct);
-      if (resolved) return nextResolve(resolved.href, context);
-    }
-  }
-  return nextResolve(specifier, context);
-}
-`;
-
-register(`data:text/javascript,${encodeURIComponent(LOADER)}`);
+// Extensionless and `@/` specifiers, and `.json` import attributes, the way the bundlers
+// resolve them — see `./ts-resolve-hook.mjs`.
+register('./ts-resolve-hook.mjs', import.meta.url);
 
 // ---------------------------------------------------------------------------
 // Preflight
@@ -180,9 +136,11 @@ delete process.env.DEPLOY_PRIME_URL;
 /**
  * The Blobs wire, wrapped. `blobFaults.put(entry)` may return a Response to answer a PUT with
  * instead of the store; `blobFaults.etagReads` stamps successful reads with the store's own etag
- * (the local server sends none, Netlify always does). Both are reset by `withBlobFaults`.
+ * (the local server sends none, Netlify always does); `blobFaults.loseAnswer(entry)`, when true,
+ * lets that call reach the store and then answers 503 instead, once — a write that landed but
+ * whose answer was lost, which the client retries. All are reset by `withBlobFaults`.
  */
-const blobFaults = { put: null, etagReads: false, before: null };
+const blobFaults = { put: null, etagReads: false, before: null, loseAnswer: null };
 /**
  * Netlify's cache purge API, stood in for: `purgeCache` from `@netlify/functions` posts to
  * `https://api.netlify.com/api/v1/purge`, and no smoke run may reach the real one. Each call is
@@ -221,6 +179,15 @@ globalThis.fetch = async (input, init = {}) => {
     const forced = blobFaults.put(entry);
     if (forced) return forced;
   }
+  if (blobFaults.loseAnswer && blobFaults.loseAnswer(entry)) {
+    blobFaults.loseAnswer = null;
+    await realFetch(input, init);
+    // The rate-limit header keeps the client's retry to its one-second minimum.
+    return new Response('answer lost', {
+      status: 503,
+      headers: { 'X-RateLimit-Reset': String(Math.ceil(Date.now() / 1000)) },
+    });
+  }
   const response = await realFetch(input, init);
   if (
     blobFaults.etagReads &&
@@ -248,6 +215,7 @@ async function withBlobFaults(faults, run) {
     blobFaults.put = null;
     blobFaults.etagReads = false;
     blobFaults.before = null;
+    blobFaults.loseAnswer = null;
   }
 }
 
@@ -269,11 +237,13 @@ let imagesHandler;
 let uploadsHandler;
 let getContent;
 let getStore;
+let specialsText;
 try {
   ({ default: contentHandler } = await import('../netlify/functions/admin-content.mts'));
   ({ default: imagesHandler } = await import('../netlify/functions/admin-images.mts'));
   ({ default: uploadsHandler } = await import('../netlify/functions/uploads.mts'));
   ({ getContent } = await import('../src/lib/server/content.ts'));
+  ({ specialsText } = await import('../src/lib/menu-content.ts'));
   ({ getStore } = await import('@netlify/blobs'));
 } catch (error) {
   await server.stop();
@@ -438,9 +408,11 @@ function homeWith(edit) {
   return document;
 }
 
-/** The gate's opening-hours range, as `scripts/verify-build.mjs` matches it (no `g` flag: a
- *  sticky lastIndex would make the same test alternate between true and false). */
-/** Where a document states the hours: the `{hours}` token, or a range typed out. */
+/**
+ * Where a document states the hours: the `{hours}` token, or a range typed out. Only a locator
+ * for the parity scenario below, which leaves the judging to the validator itself (no `g` flag:
+ * a sticky lastIndex would make the same test alternate between true and false).
+ */
 const HOURS_RANGE =
   /\{hours\}|\b\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*(?:–|—|-|to)\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b/i;
 
@@ -498,6 +470,23 @@ await scenario('auth: no credentials and wrong credentials both get 401', async 
       assert.equal(response.status, 401, `${label} answered ${response.status}`);
       assert.match(response.headers.get('www-authenticate') ?? '', /^Basic realm=/);
     }
+  }
+});
+
+await scenario('auth: an older production deploy refuses the admin even with good credentials', async () => {
+  // Each deploy keeps the credentials it was built with, and an old one is still reachable at
+  // its own address — after a password change it must not let the old password in.
+  const handlers = [
+    { label: 'content', handler: contentHandler, route: '/admin/api/content/home' },
+    { label: 'images', handler: imagesHandler, route: '/admin/api/images' },
+  ];
+  for (const { label, handler, route } of handlers) {
+    const old = await handler(request('GET', route), { deploy: { context: 'production', published: false } });
+    assert.equal(old.status, 403, `${label} on an old deploy answered ${old.status}`);
+    const live = await handler(request('GET', route), { deploy: { context: 'production', published: true } });
+    assert.equal(live.status, 200, `${label} on the live deploy answered ${live.status}`);
+    const preview = await handler(request('GET', route), { deploy: { context: 'deploy-preview', published: false } });
+    assert.equal(preview.status, 200, `${label} on a preview answered ${preview.status}`);
   }
 });
 
@@ -632,9 +621,12 @@ await scenario('content: hours or open days that contradict the spec are refused
       await content('PUT', '/admin/api/content/directions', { body: { document } }),
       400,
     );
+    // A rule issue, not the "type {hours} instead" steer: in this {hours} field a correct range
+    // typed out by hand earns that advisory on the same path, which would otherwise satisfy the
+    // check even with the day-range rule broken.
     assert.ok(
-      payload.issues.some((issue) => issue.path === field.path),
-      `"${replacement}": expected an issue on ${field.path}, got ${JSON.stringify(payload.issues)}`,
+      payload.issues.some((issue) => issue.path === field.path && issue.advisory !== true),
+      `"${replacement}": expected a rule issue on ${field.path}, got ${JSON.stringify(payload.issues)}`,
     );
   }
 });
@@ -778,8 +770,8 @@ await scenario('content: a publish asks the site to refresh', async () => {
     assert.equal(payload.revalidated, true);
     assert.deepEqual(
       site.requests,
-      [{ method: 'POST', url: '/admin/api/revalidate/', authorization: AUTH }],
-      'the publish should make exactly one refresh call, carrying the caller’s credentials',
+      [{ method: 'POST', url: '/admin/api/revalidate/?doc=home', authorization: AUTH }],
+      'the publish should make exactly one refresh call, naming its document and carrying the caller’s credentials',
     );
   } finally {
     await site.stop();
@@ -849,6 +841,32 @@ await scenario('content: a save the store refuses is reported, not published', a
   } finally {
     await site.stop();
   }
+});
+
+/**
+ * The other half of the same client behaviour: `@netlify/blobs` retries a write whose answer was
+ * lost (a 5xx, a dropped connection) with the same condition, so a save that landed comes back
+ * from the retry as a 412. That is this save's own write, not a conflict: it must be reported as
+ * published, and the snapshot of the version it replaced must stay in the history.
+ */
+await scenario('content: a save whose answer was lost is still published, history intact', async () => {
+  const before = await homeState();
+  const document = homeWith((home) => {
+    home.hero.lede = `${HOME_SEED.hero.lede} Saved, though the answer was lost.`;
+  });
+  const response = await withBlobFaults(
+    { etagReads: true, loseAnswer: blobCall('PUT', 'site-content', 'home.json') },
+    () => content('PUT', '/admin/api/content/home', { body: { document } }),
+  );
+  const payload = await expectJson(response, 200);
+  assert.equal(payload.ok, true);
+  const after = await homeState();
+  assert.equal(after.lede, document.hero.lede);
+  assert.equal(
+    after.versions,
+    Math.min(before.versions + 1, 20),
+    'the snapshot of the replaced version must stay in the history',
+  );
 });
 
 await scenario('content: a save based on an older version is refused with 409', async () => {
@@ -1152,11 +1170,18 @@ await scenario('images: once the reference is cleared the photo deletes', async 
 
   // The page no longer shows it, but the version just replaced does — and a restore would put
   // it back on the site — so the library still refuses, naming the history.
-  // The library says so up front: not on a page, but held by the home page's history.
-  const listing = await expectJson(await images('GET', '/admin/api/images'), 200);
+  // The library says so up front: not on a page, but held by the home page's history. That
+  // scan is opt-in (`?history=1`, the photo library's listing); the pickers skip it.
+  const listing = await expectJson(await images('GET', '/admin/api/images?history=1'), 200);
   const listed = listing.images.find((image) => image.id === photo.id);
   assert.deepEqual(listed.usedBy, []);
   assert.deepEqual(listed.inHistory, ['home']);
+  const quick = await expectJson(await images('GET', '/admin/api/images'), 200);
+  assert.deepEqual(
+    quick.images.find((image) => image.id === photo.id).inHistory,
+    [],
+    'without ?history=1 the listing skips the history scan',
+  );
   const kept = await expectJson(await images('DELETE', `/admin/api/images/${photo.id}`), 409);
   assert.match(kept.issues[0].message, /saved versions/);
 
@@ -1167,7 +1192,7 @@ await scenario('images: once the reference is cleared the photo deletes', async 
     const raw = await store.get(decodeURIComponent(blob.key), { type: 'text' });
     if (raw?.includes(photo.id)) await store.delete(decodeURIComponent(blob.key));
   }
-  const cleared = await expectJson(await images('GET', '/admin/api/images'), 200);
+  const cleared = await expectJson(await images('GET', '/admin/api/images?history=1'), 200);
   assert.deepEqual(cleared.images.find((image) => image.id === photo.id).inHistory, []);
   const payload = await expectJson(await images('DELETE', `/admin/api/images/${photo.id}`), 200);
   assert.equal(payload.ok, true);
@@ -1387,6 +1412,24 @@ await scenario('images: an upload the store refuses is reported as failed, not s
   assert.equal(after.images.length, before.images.length, 'a refused upload must not be listed');
 });
 
+await scenario('images: an upload whose answer was lost is still stored, once', async () => {
+  // A photo that landed but whose answer was lost comes back from the client's retry as a 412 —
+  // its own write, not a clash: the upload succeeds and the library holds it exactly once.
+  const count = async () => (await expectJson(await images('GET', '/admin/api/images'), 200)).images.length;
+  const before = await count();
+  const lostPhotoPut = (entry) =>
+    entry.method === 'PUT' &&
+    entry.store === 'site:site-images' &&
+    entry.key !== null &&
+    !entry.key.startsWith('w800/');
+  const response = await withBlobFaults({ loseAnswer: lostPhotoPut }, async () =>
+    upload(await jpeg(64, 48), { width: 64, height: 48, name: 'answer-lost.jpg' }),
+  );
+  const { image } = await expectJson(response, 201);
+  assert.equal(await count(), before + 1, 'the photo must be stored exactly once');
+  assert.equal((await serveUpload('GET', `/images/uploads/${image.id}`)).status, 200);
+});
+
 await scenario('images: an upload from another website is refused', async () => {
   const form = new FormData();
   form.set('file', new Blob([await jpeg(32, 32)], { type: 'image/jpeg' }), 'x.jpg');
@@ -1444,6 +1487,8 @@ await scenario('images: unusable dimensions are refused with 400', async () => {
 
 /** What `netlify/functions/uploads.mts` must promise a browser and the CDN. */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+/** The CDN's copy: the same terms, kept in Netlify's durable cache. */
+const CDN_IMMUTABLE = `${IMMUTABLE}, durable`;
 
 await scenario('uploads: a stored photo is served with immutable cache headers', async () => {
   const bytes = await jpeg(320, 240);
@@ -1459,7 +1504,7 @@ await scenario('uploads: a stored photo is served with immutable cache headers',
   // An id is minted per upload and never reused, so the bytes behind this URL cannot change.
   // Both headers matter: one is the browser's copy, the other the CDN's.
   assert.equal(response.headers.get('cache-control'), IMMUTABLE);
-  assert.equal(response.headers.get('netlify-cdn-cache-control'), IMMUTABLE);
+  assert.equal(response.headers.get('netlify-cdn-cache-control'), CDN_IMMUTABLE);
   assert.equal(response.headers.get('netlify-cache-tag'), `upload-${photo.id}`);
 
   const body = new Uint8Array(await response.arrayBuffer());
@@ -1488,7 +1533,7 @@ await scenario('uploads: the 800px copy is served at w800, and older photos fall
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('content-type'), 'image/jpeg');
   assert.equal(response.headers.get('cache-control'), IMMUTABLE);
-  assert.equal(response.headers.get('netlify-cdn-cache-control'), IMMUTABLE);
+  assert.equal(response.headers.get('netlify-cdn-cache-control'), CDN_IMMUTABLE);
   // The photo's own tag, so the purge a delete makes drops both copies.
   assert.equal(response.headers.get('netlify-cache-tag'), `upload-${image.id}`);
   assert.equal((await response.arrayBuffer()).byteLength, smallBytes.length);
@@ -1571,6 +1616,25 @@ await scenario('loader: a menu saved before the page wording existed still publi
   assert.equal(loaded.source, 'blob');
   assert.equal(loaded.document.page, undefined);
   assert.deepEqual(loaded.document.sections, MENU_SEED.sections);
+});
+
+await scenario('loader: a menu whose page wording leaves out an optional field still renders', async () => {
+  // An optional page field may be missing from a stored menu (one saved before the field
+  // existed). The page and the editor read every page field as a string, so the publish stores
+  // it filled in, and the loader fills in a stored menu that still lacks it.
+  const document = structuredClone(MENU_SEED);
+  delete document.page.specialsLead;
+  await expectJson(await content('PUT', '/admin/api/content/menu', { body: { document } }), 200);
+  const published = await getContent('menu');
+  assert.equal(published.document.page.specialsLead, '', 'the publish stores the field filled in');
+
+  const store = getStore('site-content', { consistency: 'strong' });
+  const stored = JSON.parse(await store.get('menu.json', { type: 'text' }));
+  delete stored.page.specialsLead;
+  await store.set('menu.json', JSON.stringify(stored));
+  const loaded = await getContent('menu');
+  assert.equal(loaded.document.page.specialsLead, '', 'the loader fills in a stored menu that lacks it');
+  assert.doesNotThrow(() => specialsText(loaded.document.page.specialsLead, loaded.document.specialsNote));
 });
 
 await scenario('loader: with no Blobs context the pages render the defaults', async () => {

@@ -20,6 +20,7 @@ import type { DocumentParser } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
 import { DocumentEditorFrame } from '@/components/admin/DocumentEditorFrame';
 import { stopUndoRedoPropagation, TextAreaField, TextField } from '@/components/admin/fields';
+import type { TextFieldProps } from '@/components/admin/fields';
 import * as ops from '@/components/admin/menu-ops';
 import { countMenu } from '@/components/admin/menu-ops';
 import type { MenuPageTextKey } from '@/components/admin/menu-ops';
@@ -94,24 +95,6 @@ function describeMenuPath(menu: MenuContent, path: string): string {
   return `${sectionLabel} · ${rest.replace(/^\./, '')}`;
 }
 
-interface PageTextFieldProps {
-  readonly id: string;
-  readonly label: string;
-  readonly hint: string | undefined;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-}
-
-/** A single line of the page wording, its hint under the field as `SchemaFields` sets it. */
-function PageTextField({ id, label, hint, value, onChange }: PageTextFieldProps) {
-  return (
-    <div>
-      <TextField id={id} label={label} value={value} onChange={onChange} />
-      {hint ? <p className="mt-1 text-sm text-bark/70">{hint}</p> : null}
-    </div>
-  );
-}
-
 export function MenuEditor() {
   const editor = useDocumentEditor<MenuContent>({
     doc: 'menu',
@@ -126,8 +109,11 @@ export function MenuEditor() {
 
   const page = menuPageCopy(menu);
 
-  /** Props for one hand-drawn line of the page wording: label, hint and id from its spec. */
-  function pageText(key: MenuPageTextKey): PageTextFieldProps {
+  /**
+   * Props for one hand-drawn line of the page wording: label, hint and id from its spec, the
+   * hint drawn and linked to the field as `SchemaFields` does it.
+   */
+  function pageText(key: MenuPageTextKey): TextFieldProps {
     const field = MENU_PAGE_FIELDS[key];
     return {
       id: `field-page.${key}`,
@@ -302,7 +288,11 @@ export function MenuEditor() {
     focusSoon(`field-sections[${nextIndex}].name`);
   }
 
-  const sectionOptions = menu.sections.map((section, index) => ({ index, name: section.name }));
+  const sectionOptions = menu.sections.map((section, index) => ({
+    index,
+    id: section.id,
+    name: section.name,
+  }));
 
   return (
     <DocumentEditorFrame
@@ -323,7 +313,7 @@ export function MenuEditor() {
             Top of the page
           </h2>
           <div className="mt-4 space-y-4">
-            <PageTextField {...pageText('eyebrow')} />
+            <TextField {...pageText('eyebrow')} />
             <TextAreaField
               id="field-intro"
               label="Menu intro"
@@ -354,8 +344,8 @@ export function MenuEditor() {
             The dashed box above the menu. The Facebook button under the words is added for you.
           </p>
           <div className="mt-4 space-y-4">
-            <PageTextField {...pageText('specialsTitle')} />
-            <PageTextField {...pageText('specialsLead')} />
+            <TextField {...pageText('specialsTitle')} />
+            <TextField {...pageText('specialsLead')} />
             <TextAreaField
               id="field-specialsNote"
               label="Specials note"
@@ -372,7 +362,7 @@ export function MenuEditor() {
             Sections
           </h2>
           <div className="mt-4 rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6">
-            <PageTextField {...pageText('sectionsTitle')} />
+            <TextField {...pageText('sectionsTitle')} />
           </div>
           <div className="mt-5 space-y-5">
             {/* Keyed by id (unique via `uniqueSectionId`): per-section local state — like an

@@ -58,6 +58,24 @@ export function checkBasicAuth(
   return userOk && passOk;
 }
 
+/** The slice of Netlify's runtime `context` the admin guards read: which deploy is answering. */
+export interface DeployContext {
+  readonly deploy?: { readonly context?: string; readonly published?: boolean };
+}
+
+/**
+ * True for an older production deploy reached at its own permalink
+ * (`<deploy id>--<site>.netlify.app`). Every deploy keeps the environment variables, the code and
+ * the content rules it was built with, yet writes to the same site-wide stores the live pages
+ * read — so an old one would still accept a password that has since been rotated, and publish
+ * through rules that have since been tightened. Only the published deploy serves the admin. No
+ * context at all (the smoke harness, `dev:admin`) and every other context (`netlify dev`, deploy
+ * previews, branch deploys) pass.
+ */
+export function isSupersededDeploy(context: DeployContext | undefined): boolean {
+  return context?.deploy?.context === 'production' && context.deploy.published === false;
+}
+
 /** The 401 that makes browsers show the sign-in prompt for the admin realm. */
 export function unauthorized(): Response {
   return new Response('Sign in to continue.', {

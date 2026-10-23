@@ -18,6 +18,26 @@ const FIELD_CLASS =
 const LABEL_CLASS = 'mb-1 block text-sm font-bold text-bark/80';
 
 /**
+ * The id of a field's hint line: `field-intro` → `field-intro-hint`. No validator path can end
+ * in `-hint`, so it never answers an issue's `field-<path>` lookup.
+ */
+export function hintIdFor(fieldId: string): string {
+  return `${fieldId}-hint`;
+}
+
+/**
+ * A field's helper line, set between its label and the control. The control names it in
+ * `aria-describedby={hintIdFor(fieldId)}`, so a screen reader reads it along with the label.
+ */
+export function FieldHint({ fieldId, text }: { readonly fieldId: string; readonly text: string }) {
+  return (
+    <p id={hintIdFor(fieldId)} className="mb-1.5 text-sm text-bark/70">
+      {text}
+    </p>
+  );
+}
+
+/**
  * For scratch inputs whose text is not part of the document history (a name typed but not
  * yet added): stops Ctrl/Cmd+Z/Y from reaching the editor's global undo/redo handler, so the
  * browser's native text undo applies inside the field instead of rewinding the menu.
@@ -36,6 +56,8 @@ export interface TextFieldProps {
   readonly placeholder?: string;
   /** Visually hide the label (still announced) for dense rows that label themselves. */
   readonly hideLabel?: boolean;
+  /** Short helper line rendered under the label, as `TextAreaField` does. */
+  readonly hint?: string;
   readonly onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
   readonly className?: string;
 }
@@ -47,14 +69,17 @@ export function TextField({
   onChange,
   placeholder,
   hideLabel = false,
+  hint,
   onKeyDown,
   className = '',
 }: TextFieldProps) {
+  const hintId = hint ? hintIdFor(id) : undefined;
   return (
     <div className={className}>
       <label htmlFor={id} className={hideLabel ? 'sr-only' : LABEL_CLASS}>
         {label}
       </label>
+      {hint ? <FieldHint fieldId={id} text={hint} /> : null}
       <input
         id={id}
         type="text"
@@ -62,6 +87,7 @@ export function TextField({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         onKeyDown={onKeyDown}
+        aria-describedby={hintId}
         className={FIELD_CLASS}
       />
     </div>
@@ -88,17 +114,13 @@ export function TextAreaField({
   hint,
   className = '',
 }: TextAreaFieldProps) {
-  const hintId = hint ? `${id}-hint` : undefined;
+  const hintId = hint ? hintIdFor(id) : undefined;
   return (
     <div className={className}>
       <label htmlFor={id} className={LABEL_CLASS}>
         {label}
       </label>
-      {hint ? (
-        <p id={hintId} className="mb-1.5 text-sm text-bark/70">
-          {hint}
-        </p>
-      ) : null}
+      {hint ? <FieldHint fieldId={id} text={hint} /> : null}
       <textarea
         id={id}
         value={value}

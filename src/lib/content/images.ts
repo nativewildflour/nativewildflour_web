@@ -57,6 +57,11 @@ export const SMALL_IMAGE_WIDTH = 800;
  */
 export const SMALL_IMAGE_PREFIX = 'w800';
 
+/** The blob key of a photo's 800px copy — what the upload writes and the public endpoint reads. */
+export function smallImageKey(id: string): string {
+  return `${SMALL_IMAGE_PREFIX}/${id}`;
+}
+
 /**
  * The `src` for a stored image. `base` exists for the admin preview, which points at the
  * auth-gated `/admin/api/images` endpoint instead, so everything the editor loads stays inside

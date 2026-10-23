@@ -118,12 +118,8 @@ function toJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
   });
 }
 
-/** `source` drawn at `width` × `height` on a white ground and encoded, or `null`. */
-async function encode(
-  source: CanvasImageSource,
-  width: number,
-  height: number,
-): Promise<EncodedImage | null> {
+/** `source` drawn at `width` × `height` on a white ground, or `null` without a 2D context. */
+function draw(source: CanvasImageSource, width: number, height: number): HTMLCanvasElement | null {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -135,10 +131,24 @@ async function encode(
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, width, height);
   context.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
 
+/** The canvas encoded as JPEG, or `null`. */
+async function encode(canvas: HTMLCanvasElement): Promise<EncodedImage | null> {
+  const { width, height } = canvas;
   const blob = await toJpeg(canvas);
   if (blob === null || blob.size === 0) return null;
   return { blob, width, height };
+}
+
+/**
+ * Hands a canvas's pixels back now rather than whenever it is collected — some engines (Safari
+ * above all) cap the memory all canvases may hold at once, and a phone hits that cap first.
+ */
+function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 /**
@@ -146,30 +156,52 @@ async function encode(
  * plus, for a photo wider than `SMALL_IMAGE_WIDTH`, a copy exactly that wide.
  * A file smaller than the ceiling is re-encoded rather than passed through, so every stored
  * photo is a JPEG the endpoint will accept.
+ *
+ * Memory is the constraint on a phone: a camera picture decodes to tens of megabytes. So the
+ * decoded original is drawn once, at the stored size, and let go of straight away; the small
+ * copy is drawn from that canvas (a clean 2:1 step from a full-size photo), and only then is
+ * anything encoded.
  */
 export async function resizeImage(file: File): Promise<ResizeResult> {
   try {
     const source = await decode(file);
     if (source === null) return { error: UNREADABLE };
+
+    const scale = Math.min(1, MAX_EDGE / Math.max(source.width, source.height));
+    const width = Math.max(1, Math.round(source.width * scale));
+    const height = Math.max(1, Math.round(source.height * scale));
+
+    let fullCanvas: HTMLCanvasElement | null;
     try {
-      const scale = Math.min(1, MAX_EDGE / Math.max(source.width, source.height));
-      const width = Math.max(1, Math.round(source.width * scale));
-      const height = Math.max(1, Math.round(source.height * scale));
+      fullCanvas = draw(source.draw, width, height);
+    } finally {
+      source.release();
+    }
+    if (fullCanvas === null) return { error: NO_CANVAS };
 
-      const full = await encode(source.draw, width, height);
-      if (full === null) return { error: NO_CANVAS };
-
-      // The small copy is drawn from the decoded original, not the stored photo, so it is one
-      // downscale away from the camera's pixels rather than two.
-      let small: EncodedImage | null = null;
+    let smallCanvas: HTMLCanvasElement | null = null;
+    try {
       if (width > SMALL_IMAGE_WIDTH) {
         const smallHeight = Math.max(1, Math.round((height * SMALL_IMAGE_WIDTH) / width));
-        small = await encode(source.draw, SMALL_IMAGE_WIDTH, smallHeight);
+        smallCanvas = draw(fullCanvas, SMALL_IMAGE_WIDTH, smallHeight);
+        if (smallCanvas === null) return { error: NO_CANVAS };
+      }
+
+      const full = await encode(fullCanvas);
+      if (full === null) return { error: NO_CANVAS };
+      // Encoded, the full-size pixels are done with — let them go before the second encode.
+      releaseCanvas(fullCanvas);
+
+      let small: EncodedImage | null = null;
+      if (smallCanvas !== null) {
+        small = await encode(smallCanvas);
         if (small === null) return { error: NO_CANVAS };
       }
       return { ...full, small };
     } finally {
-      source.release();
+      // Every way out, a failure part-way included. Releasing a canvas twice is harmless.
+      releaseCanvas(fullCanvas);
+      if (smallCanvas !== null) releaseCanvas(smallCanvas);
     }
   } catch {
     return { error: UNREADABLE };

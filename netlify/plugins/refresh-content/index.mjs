@@ -20,12 +20,21 @@
 
 /** With the trailing slash `trailingSlash: true` gives every route — the slash-less spelling is a 308. */
 const ROUTE = '/admin/api/revalidate/';
+/**
+ * How long the call may take. The deploy is already live, so waiting longer only spends build
+ * minutes; a refresh that times out costs at most one stale page view per page.
+ */
+const TIMEOUT_MS = 10_000;
 
 export async function onSuccess({ utils }) {
   // In production, URL is the primary domain; DEPLOY_PRIME_URL is the `*.netlify.app` address,
   // which Netlify redirects to the primary domain once one is set — and a cross-origin redirect
   // drops the Authorization header. Branch and preview deploys have no primary domain, so there
-  // DEPLOY_PRIME_URL is the deploy that just went live. (Same rule as the content function.)
+  // DEPLOY_PRIME_URL is the deploy that just went live. (The content function needs none of
+  // this: it refreshes the origin its own request came in on.) Only an auto-published deploy is
+  // live at the primary domain by now — one published later (auto-publishing locked, or a
+  // rollback, which runs no build at all) picks the stored content up as its pages' 60-second
+  // windows turn over, or straight away with the owner's next publish.
   const origin =
     process.env.CONTEXT === 'production'
       ? process.env.URL || process.env.DEPLOY_PRIME_URL
@@ -55,6 +64,7 @@ export async function onSuccess({ utils }) {
     const response = await fetch(new URL(ROUTE, origin), {
       method: 'POST',
       headers: { authorization },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (response.ok) {
       console.log(`[refresh-content] refreshed the public pages at ${origin}`);

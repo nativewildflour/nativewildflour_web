@@ -132,10 +132,28 @@ function canonicalize(value: unknown): unknown {
 }
 
 /**
+ * `value` without its top-level `updatedAt`. The server stamps that key on every publish, so it
+ * says when a document was saved, not what it says. Only the top level: no field inside a
+ * document goes by that name, and one that did would be content.
+ */
+function withoutStamp(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  if (!Object.hasOwn(value, 'updatedAt')) return value;
+  const copy: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+  delete copy.updatedAt;
+  return copy;
+}
+
+/**
  * Deep equality via key-sorted canonical JSON. Raw `JSON.stringify` is key-order-sensitive —
  * the menu seed stores `highlight` before `items` while the section builder emits it last, so
- * a hand-typed revert would otherwise read as permanently dirty.
+ * a hand-typed revert would otherwise read as permanently dirty. The publish stamp is left out
+ * (see `withoutStamp`): a draft identical in content to the loaded document, but carrying the
+ * stamp of an older version, is the same document.
  */
 export function documentsEqual<T>(a: T, b: T): boolean {
-  return a === b || JSON.stringify(canonicalize(a)) === JSON.stringify(canonicalize(b));
+  return (
+    a === b ||
+    JSON.stringify(canonicalize(withoutStamp(a))) === JSON.stringify(canonicalize(withoutStamp(b)))
+  );
 }

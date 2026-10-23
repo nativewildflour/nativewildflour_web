@@ -31,9 +31,32 @@ export const metadata = buildMetadata({
 /** See the home page: on-demand revalidation is the fast path, this is the safety net. */
 export const revalidate = 60;
 
+/**
+ * The column span of each section card on the two-column grid, in the owner's order. A
+ * featured card takes the full row. A run of half-width cards (the ones between two featured
+ * cards, or after the last) fills whole rows when its length is even; when it is odd, its last
+ * card takes the full row too — so a featured card always starts a row, no hole is left beside
+ * the card before it, and nothing is reordered to plug one.
+ */
+function sectionSpans(featured: readonly boolean[]): string[] {
+  const spans = featured.map((full) => (full ? 'sm:col-span-2' : ''));
+  let run = 0;
+  featured.forEach((full, index) => {
+    if (!full) {
+      run += 1;
+      return;
+    }
+    if (run % 2 === 1) spans[index - 1] = 'sm:col-span-2';
+    run = 0;
+  });
+  if (run % 2 === 1) spans[featured.length - 1] = 'sm:col-span-2';
+  return spans;
+}
+
 export default async function MenuPage() {
   const { document: menu } = await getContent('menu');
   const page = menuPageCopy(menu);
+  const spans = sectionSpans(menu.sections.map((section) => Boolean(section.toppings?.length)));
 
   return (
     <>
@@ -62,22 +85,19 @@ export default async function MenuPage() {
 
         <h2 className="mt-14 text-3xl font-black text-bark sm:text-4xl">{page.sectionsTitle}</h2>
         <TitleStroke />
-        {/* A featured card spans the full row; dense packing lets the next half-width card
-            fill the gap it would otherwise leave beside the card before it. */}
-        <div className="mt-8 grid grid-flow-row-dense grid-cols-1 gap-6 sm:grid-cols-2">
-          {menu.sections.map((section, index) => {
-            const featured = Boolean(section.toppings?.length);
-            return (
-              <MenuSection
-                key={`${index}-${section.id}`}
-                section={section}
-                className={featured ? 'sm:col-span-2' : ''}
-                {...(section.toppings?.length
-                  ? { chips: section.toppings, chipsLabel: 'Choose a topping' }
-                  : {})}
-              />
-            );
-          })}
+        {/* Cards keep the owner's order; `sectionSpans` closes the gaps a full-row featured
+            card would leave, without moving any card out of place. */}
+        <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
+          {menu.sections.map((section, index) => (
+            <MenuSection
+              key={`${index}-${section.id}`}
+              section={section}
+              className={spans[index] ?? ''}
+              {...(section.toppings?.length
+                ? { chips: section.toppings, chipsLabel: 'Choose a topping' }
+                : {})}
+            />
+          ))}
         </div>
       </Section>
 

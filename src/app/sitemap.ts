@@ -1,5 +1,6 @@
 import type { MetadataRoute } from 'next';
 
+import { PAGE_DOCUMENTS } from '@/data/pages';
 import type { DocumentKey } from '@/lib/content-docs';
 import { getContent } from '@/lib/server/content';
 import { absoluteUrl } from '@/lib/site';
@@ -15,21 +16,26 @@ export const revalidate = 60;
  * contribution to `lastmod`. Bump it when a deploy changes what a page shows. Owner publishes
  * never touch the repo, so their dates come from the documents themselves (below).
  */
-const LAST_MODIFIED = '2026-09-02';
+const LAST_MODIFIED = '2026-10-23';
 
 interface SitemapPage {
   readonly path: string;
-  /** Every document the page renders — the menu feeds home highlights and about's toppings. */
+  /** Every document the page renders (`PAGE_DOCUMENTS`, which the refresh route reads too). */
   readonly documents: readonly DocumentKey[];
   readonly changeFrequency: 'weekly' | 'monthly';
   readonly priority: number;
 }
 
 const SITEMAP_PAGES: readonly SitemapPage[] = [
-  { path: '/', documents: ['home', 'menu'], changeFrequency: 'weekly', priority: 1 },
-  { path: '/menu/', documents: ['menu'], changeFrequency: 'weekly', priority: 0.9 },
-  { path: '/directions/', documents: ['directions'], changeFrequency: 'monthly', priority: 0.8 },
-  { path: '/about/', documents: ['about', 'menu'], changeFrequency: 'monthly', priority: 0.7 },
+  { path: '/', documents: PAGE_DOCUMENTS['/'], changeFrequency: 'weekly', priority: 1 },
+  { path: '/menu/', documents: PAGE_DOCUMENTS['/menu/'], changeFrequency: 'weekly', priority: 0.9 },
+  {
+    path: '/directions/',
+    documents: PAGE_DOCUMENTS['/directions/'],
+    changeFrequency: 'monthly',
+    priority: 0.8,
+  },
+  { path: '/about/', documents: PAGE_DOCUMENTS['/about/'], changeFrequency: 'monthly', priority: 0.7 },
 ];
 
 /**

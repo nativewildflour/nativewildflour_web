@@ -9,13 +9,17 @@
  * once (falling back to the built-in one when it can't).
  *
  * Only same-origin messages are honored, and every draft is run through the document's
- * structural parser before it renders — a message is untrusted input like any other.
+ * structural parser before it renders — a message is untrusted input like any other. The one
+ * thing it lets through is a malformed slug, as the editor's own draft check does: a dock's link
+ * id reads "Railroad Dock" or "railroad-" while it is being typed, and refusing the draft for
+ * that would freeze the preview on every other edit until the id was finished.
  */
 
 import { useEffect, useState } from 'react';
 
 import { loadDocument } from '@/components/admin/api';
 import type { DocumentParser } from '@/components/admin/api';
+import { toleratingSlugs } from '@/components/admin/draft-storage';
 import { AboutPreview } from '@/components/admin/previews/AboutPreview';
 import { DirectionsPreview } from '@/components/admin/previews/DirectionsPreview';
 import { HomePreview } from '@/components/admin/previews/HomePreview';
@@ -42,6 +46,12 @@ const SEEDS: Record<PreviewDocumentKey, unknown> = {
   about: aboutSeed,
   directions: directionsSeed,
 };
+
+/** The document's structural parser, tolerant of a slug mid-edit (see the note above). */
+function draftParser(doc: PreviewDocumentKey): DocumentParser<unknown> {
+  const { parse, spec } = DOCUMENTS[doc];
+  return spec === null ? parse : toleratingSlugs(parse, spec);
+}
 
 function post(message: PreviewMessage): void {
   if (window.parent === window) return;
@@ -70,12 +80,14 @@ export function PreviewPage({ doc }: PreviewPageProps) {
   }, [doc]);
 
   useEffect(() => {
+    const parse = draftParser(doc);
     function onMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return;
       const message = parsePreviewMessage(event.data);
       if (message === null || message.type !== 'nwf-preview-draft' || message.doc !== doc) return;
-      const parsed = DOCUMENTS[doc].parse(message.document);
-      // A draft mid-edit can be structurally off for a moment; keep the last good one.
+      const parsed = parse(message.document);
+      // Anything else structurally off (a draft mid-edit can be, for a moment): keep the last
+      // good one.
       if (parsed.document !== null) setDocument(parsed.document);
     }
     window.addEventListener('message', onMessage);

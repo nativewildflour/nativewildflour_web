@@ -16,7 +16,7 @@ within seconds, and nothing is rebuilt.
 Why this shape:
 
 - **Publishing is instant and cheap.** The admin editors write to Blobs and ask the site to
-  refresh four pages. No build, no deploy, no minutes of waiting.
+  refresh the pages that show what changed. No build, no deploy, no minutes of waiting.
 - **Pages are still served from a cache.** Between publishes the rendered HTML sits in Netlify's
   cache like a static file. Titles, meta descriptions, canonicals, Open Graph tags and JSON-LD are
   all in the delivered HTML — nothing is assembled in the browser.
@@ -353,8 +353,9 @@ deploy is blocking, so there it is an error page until the blob is repaired.
 2. The Netlify Function (`netlify/functions/admin-content.mts`) validates again, snapshots the
    previous version, writes the blob, and asks the site to refresh by calling
    `/admin/api/revalidate` with the same sign-in.
-3. That route handler marks the four public pages for regeneration, along with the sitemap, whose
-   "last modified" dates come from each document's publish time. The next visitor to each page
+3. That route handler marks the public pages that show the published document for regeneration
+   (the menu appears on three of them: `src/data/pages.ts`), along with the sitemap, whose "last
+   modified" dates come from each document's publish time. The next visitor to each of those pages
    gets it rendered fresh from the blob store, and Netlify caches that render until the next
    publish. **Changes are live as soon as the next page load** — no build, no deploy. As a safety
    net every page also refreshes itself at most once a minute, so even a lost refresh call
@@ -362,7 +363,10 @@ deploy is blocking, so there it is an error page until the blob is repaired.
 
 A code deploy prerenders the pages from the defaults, because the build has no blob store. The
 `refresh-content` build plugin (`netlify/plugins/refresh-content/`) runs after the deploy goes
-live and makes the same refresh call, so the first visitor already sees the owner's content.
+live and makes the same refresh call for every page, so the first visitor already sees the
+owner's content. That holds for a deploy that is published automatically. One published later —
+with auto-publishing locked, or a rollback, which runs no build — serves its prerendered pages
+until each page's one-minute window turns over (or until the next publish refreshes them).
 
 ### Photos
 
@@ -375,9 +379,11 @@ file is stored in a second blob store (`site-images`), and the document keeps on
 pixel size — which is what lets the page reserve the right space before the picture
 loads. Pick an existing photo from the library to reuse it on another page. A photo cannot be
 deleted while any published document still uses it, or while a saved version in any page's
-history does (a restore would otherwise put a missing photo back on the site) — the library marks
-both cases and keeps Delete off, so remove it from the page and publish first, and wait for those
-versions to age out of the history. A delete and a publish that race each other re-check after
+history does (that keeps every listed version restorable — a restore whose photo is gone would be
+refused) — the library marks both cases and keeps Delete off, so remove it from the page and
+publish first, and wait for those versions to age out of the history (the newest 20 per page are
+kept). There is no way yet to drop a single version, so a photo that must come down at once can
+only be taken out of the history by publishing that page until its versions have rolled over. A delete and a publish that race each other re-check after
 their own write and back off (the photo is put back, or the publish is rolled back), so a live
 page never points at a missing photo. A deleted photo and its copy are also purged from Netlify's
 CDN by their shared cache tag (via `purgeCache` from `@netlify/functions`; skipped locally, where
@@ -416,6 +422,12 @@ Two notes on operating it:
   previews and branch deploys then have no working sign-in, so a preview of an unreviewed branch
   can never become a way to write to the live content. (They share the blob store, so a preview
   still *reads* the owner's published content.)
+- **Changing the password takes a deploy.** Each deploy keeps the environment variables it was
+  built with, so a new `ADMIN_PASSWORD` applies from the next deploy on. Older production deploys
+  stay reachable at their own deploy addresses for a while, still holding the old password, so
+  the admin answers only on the published deploy: those addresses refuse it. A rollback publishes
+  an older deploy again, old password included — after a password change, roll back only to a
+  deploy built since, or delete the older deploys in the Netlify UI.
 - **Two saves can collide.** Every publish carries the publish time of the version the editor
   loaded. If the document changed since — another tab, another device, a restore — the save is
   refused (HTTP 409) with a message saying so, rather than silently overwriting the newer version;
@@ -459,13 +471,10 @@ picture. A slot whose document has no image keeps the placeholder.
 
 To add a slot to a page, add a `photo` field to that page's declaration in `src/lib/content/`,
 seed it in the JSON with `{ "caption": "…", "image": null }`, and render it with `PhotoSlot` —
-the editor grows the matching upload control on its own. For a picture that belongs in the code
-rather than the content (a committed file under `public/images/`), the older form still works and
-needs the file's true pixel size, because images are served unoptimized (`images.unoptimized`):
-
-```tsx
-<PhotoSlot caption="…" src="/images/example.jpg" width={1200} height={900} />
-```
+the editor grows the matching upload control on its own. Every slot comes from a content
+document: an upload carries its pixel size in the document, which is what sizes the frame before
+the picture arrives (images are served unoptimized, `images.unoptimized`). There is no form for a
+picture committed to the repository — real photos come only from the owner, through the editors.
 
 Good candidates for more slots, in priority order:
 

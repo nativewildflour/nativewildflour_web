@@ -1,5 +1,6 @@
 'use client';
 
+import { BrandText } from '@/components/BrandText';
 import { MenuSection } from '@/components/MenuSection';
 import { GoodToKnow } from '@/components/menu/GoodToKnow';
 import { menuPageCopy } from '@/lib/default-menu';
@@ -33,7 +34,10 @@ export function PreviewPane({ menu, className = '' }: PreviewPaneProps) {
 
       <div className="mt-4 space-y-4">
         <div>
-          <p className="text-xs font-bold tracking-[0.18em] text-wood uppercase">{page.eyebrow}</p>
+          {/* Uppercase labels go through `BrandText`, as on the page, so the name keeps its casing. */}
+          <p className="text-xs font-bold tracking-[0.18em] text-wood uppercase">
+            <BrandText text={page.eyebrow} />
+          </p>
           <p className="mt-2 text-bark/80">{menu.intro}</p>
         </div>
 
@@ -61,7 +65,7 @@ export function PreviewPane({ menu, className = '' }: PreviewPaneProps) {
 
         <div className="rounded-2xl bg-sky/40 p-4 ring-1 ring-blueberry/15">
           <p className="text-xs font-bold tracking-[0.18em] text-wood uppercase">
-            {page.goodToKnow.eyebrow}
+            <BrandText text={page.goodToKnow.eyebrow} />
           </p>
           <h3 className="mt-1 font-display text-2xl font-black text-bark">
             {page.goodToKnow.title}

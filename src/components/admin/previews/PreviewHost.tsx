@@ -9,6 +9,10 @@
  * keyboard focus, out of the accessibility tree: a preview full of live links would carry her
  * off the page mid-edit, and every word in it is already editable in the fields beside it. A
  * visually hidden note says so, since the frame itself is no longer announced.
+ *
+ * `DocumentEditorFrame` mounts this only while the preview can be seen, so on a small screen the
+ * frame loads when the owner opens the preview and is torn down when she closes it — each mount
+ * starts fresh, and the ready handshake sends it the current draft.
  */
 
 import { useEffect, useRef, useState } from 'react';

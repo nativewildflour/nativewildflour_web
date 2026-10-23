@@ -17,6 +17,8 @@
  * Web APIs only, no `node:` imports, so every runtime above can load it.
  */
 
+import { failure } from './responses';
+
 /** The hosts a same-site request may name: the request URL's own, and what the proxy saw. */
 function ownHosts(request: Request): Set<string> {
   const hosts = new Set<string>();
@@ -60,13 +62,6 @@ function mediaType(request: Request): string {
   return (request.headers.get('content-type') ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
 }
 
-function refusal(status: number, message: string): Response {
-  return new Response(JSON.stringify({ ok: false, issues: [{ path: '', message }] }), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-  });
-}
-
 /**
  * `null` when the request may proceed, otherwise the response to send. `expected` is the body
  * media type the endpoint reads, or `null` for an endpoint that reads no body.
@@ -76,10 +71,10 @@ export function guardWrite(
   expected: 'application/json' | 'multipart/form-data' | null,
 ): Response | null {
   if (!isSameOrigin(request)) {
-    return refusal(403, 'That request came from another website, so it was refused.');
+    return failure(403, 'That request came from another website, so it was refused.');
   }
   if (expected !== null && mediaType(request) !== expected) {
-    return refusal(415, `This endpoint only accepts ${expected}.`);
+    return failure(415, `This endpoint only accepts ${expected}.`);
   }
   return null;
 }

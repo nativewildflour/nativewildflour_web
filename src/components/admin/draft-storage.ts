@@ -18,19 +18,28 @@ import { documentsEqual } from '@/components/admin/editor-state';
 import type { DocumentSpec, FieldMap } from '@/lib/content-schema';
 import { isPlainObject, slugify } from '@/lib/copy-rules';
 
-function draftKey(doc: DocumentKey): string {
+/** The localStorage key of `doc`'s draft slot — also what a `storage` event names. */
+export function draftStorageKey(doc: DocumentKey): string {
   return `nwf-admin-${doc}-draft`;
 }
+
+const draftKey = draftStorageKey;
 
 export interface StoredDraft<T> {
   /** When the draft was written, ISO 8601 — `null` when the stored value predates the field. */
   readonly savedAt: string | null;
   readonly document: T;
   /**
-   * The `updatedAt` of the published version the edits started from — `null` when they
-   * started from the built-in default, `undefined` when unknown (an older draft).
+   * The `updatedAt` of the published version the editor that wrote it had loaded — `null` when
+   * that was the built-in default, `undefined` when unknown (an older draft).
    */
   readonly base: string | null | undefined;
+  /**
+   * The `updatedAt` of the published version the edits first started from. It differs from
+   * `base` when a draft started before another publish was resumed later: it is kept through the
+   * resume, so the draft still reads as behind on a later visit. `undefined`: the same as `base`.
+   */
+  readonly startedFrom: string | null | undefined;
   /** The editor instance that wrote it; `null` for a draft that predates the field. */
   readonly tabId: string | null;
 }
@@ -39,7 +48,13 @@ interface RawDraft {
   readonly savedAt: string | null;
   readonly document: unknown;
   readonly base: string | null | undefined;
+  readonly startedFrom: string | null | undefined;
   readonly tabId: string | null;
+}
+
+/** A stored version stamp: a string, `null` (the default), or `undefined` when unreadable. */
+function stampFrom(value: unknown): string | null | undefined {
+  return typeof value === 'string' || value === null ? value : undefined;
 }
 
 function readRaw(doc: DocumentKey): RawDraft | null {
@@ -51,8 +66,8 @@ function readRaw(doc: DocumentKey): RawDraft | null {
   return {
     savedAt: typeof record.savedAt === 'string' ? record.savedAt : null,
     document: record.document,
-    base:
-      typeof record.base === 'string' || record.base === null ? record.base : undefined,
+    base: stampFrom(record.base),
+    startedFrom: stampFrom(record.startedFrom),
     tabId: typeof record.tabId === 'string' ? record.tabId : null,
   };
 }
@@ -71,7 +86,13 @@ export function readDraft<T>(doc: DocumentKey, parse: DocumentParser<T>): Stored
     if (raw === null) return null;
     const { document } = parse(raw.document);
     if (document === null) return null;
-    return { savedAt: raw.savedAt, document, base: raw.base, tabId: raw.tabId };
+    return {
+      savedAt: raw.savedAt,
+      document,
+      base: raw.base,
+      startedFrom: raw.startedFrom,
+      tabId: raw.tabId,
+    };
   } catch {
     return null;
   }
@@ -81,6 +102,8 @@ export interface DraftOwner {
   readonly tabId: string;
   /** See `StoredDraft.base`. */
   readonly base: string | null | undefined;
+  /** See `StoredDraft.startedFrom`. */
+  readonly startedFrom?: string | null | undefined;
 }
 
 export function writeDraft<T>(doc: DocumentKey, document: T, owner: DraftOwner): void {
@@ -91,6 +114,7 @@ export function writeDraft<T>(doc: DocumentKey, document: T, owner: DraftOwner):
         savedAt: new Date().toISOString(),
         tabId: owner.tabId,
         ...(owner.base === undefined ? {} : { base: owner.base }),
+        ...(owner.startedFrom === undefined ? {} : { startedFrom: owner.startedFrom }),
         document,
       }),
     );

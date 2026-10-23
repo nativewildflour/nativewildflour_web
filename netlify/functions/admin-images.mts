@@ -49,19 +49,28 @@ import {
 import {
   IMAGE_ID,
   MAX_IMAGE_DIMENSION,
-  SMALL_IMAGE_PREFIX,
   SMALL_IMAGE_WIDTH,
+  smallImageKey,
 } from '../../src/lib/content/images';
-import { checkBasicAuth, unauthorized } from '../shared/basic-auth';
+import { guardAdmin } from '../shared/admin-gate';
+import type { DeployContext } from '../shared/basic-auth';
 import { guardWrite } from '../shared/request-guard';
+import { failure, json } from '../shared/responses';
+import {
+  CONTENT_STORE,
+  IMAGE_STORE,
+  canonicalKey,
+  currentKey,
+  isVersionKey,
+  versionPrefix,
+} from '../shared/stores';
+import { writeOutcome } from '../shared/write-outcome';
 
 /** Netlify routes requests to this function by exact path — no wildcard, no `/api/` root. */
 export const config = {
   path: ['/admin/api/images', '/admin/api/images/:id'],
 };
 
-const IMAGE_STORE = 'site-images';
-const CONTENT_STORE = 'site-content';
 const IMAGES_ROUTE = '/admin/api/images';
 /** Uploads above this are refused with a 413. The editor downscales first, so a photo that
  *  arrives this large is one the resize step could not handle. */
@@ -73,10 +82,12 @@ const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 /** How long the CDN purge may take before the delete answers without it. */
 const PURGE_TIMEOUT_MS = 5_000;
 
-/** The blob key of a photo's 800px copy. */
-const smallKey = (id: string): string => `${SMALL_IMAGE_PREFIX}/${id}`;
-
 type ImageStore = ReturnType<typeof getStore>;
+
+/** What this function reads of Netlify's runtime `context`: the deploy, and `waitUntil`. */
+interface FunctionContext extends DeployContext {
+  readonly waitUntil?: (promise: Promise<unknown>) => void;
+}
 
 /** One photo as the library and the photo fields see it. */
 interface ImageRecord {
@@ -90,18 +101,6 @@ interface ImageRecord {
   readonly usedBy: DocumentKey[];
   /** Documents whose saved versions still hold this photo — the other half of the guard. */
   readonly inHistory: DocumentKey[];
-}
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-  });
-}
-
-/** Error responses share one shape with the content API: `{ ok, issues }`. */
-function failure(status: number, message: string, path = ''): Response {
-  return json(status, { ok: false, issues: [{ path, message }] });
 }
 
 /**
@@ -131,8 +130,8 @@ function stringFrom(value: unknown): string {
  * Which documents reference which photo, read from the store rather than the seeds. A document
  * with nothing saved over it contributes nothing on purpose: the seeds ship no uploads, so
  * before the owner's first save on a page there is nothing there to hold a photo. A saved
- * document that will not parse is skipped too — it is already failing every build, and the
- * publish endpoint is where that gets fixed.
+ * document that will not parse is skipped too — its page is already failing to render, and the
+ * editor's error mode (a restore) is where that gets fixed.
  */
 async function readReferences(): Promise<Map<string, DocumentKey[]>> {
   const store = getStore(CONTENT_STORE, { consistency: 'strong' });
@@ -140,7 +139,7 @@ async function readReferences(): Promise<Map<string, DocumentKey[]>> {
   // The four reads are independent, so they go out together; the fold below runs in
   // `DOCUMENT_KEYS` order so `usedBy` lists pages in a stable order.
   const raws: (string | null)[] = await Promise.all(
-    DOCUMENT_KEYS.map((doc) => store.get(`${doc}.json`, { type: 'text' })),
+    DOCUMENT_KEYS.map((doc) => store.get(currentKey(doc), { type: 'text' })),
   );
   for (const [position, doc] of DOCUMENT_KEYS.entries()) {
     const raw = raws[position];
@@ -167,16 +166,19 @@ interface ImageListing {
 
 /**
  * Which documents' version history holds which photo: one pass over every snapshot (at most 20
- * per document, all read in parallel), shared by the library listing and the delete guard. An
- * unreadable snapshot holds nothing — a restore refuses it anyway.
+ * per document, all read in parallel), for the delete guard and for the photo library (asked
+ * for with `?history=1` — the photo pickers have no use for it). The snapshots are exactly the
+ * ones the version history lists (`isVersionKey`), so the guard and the history agree on what a
+ * version is. An unreadable snapshot holds nothing — a restore refuses it anyway.
  */
 async function readHistoryReferences(): Promise<Map<string, DocumentKey[]>> {
   const store = getStore(CONTENT_STORE, { consistency: 'strong' });
   const perDocument = await Promise.all(
     DOCUMENT_KEYS.map(async (doc) => {
-      const { blobs } = (await store.list({ prefix: `${doc}-versions/` })) as ImageListing;
+      const { blobs } = (await store.list({ prefix: versionPrefix(doc) })) as ImageListing;
+      const keys = blobs.map((blob) => canonicalKey(blob.key)).filter((key) => isVersionKey(doc, key));
       const raws: (string | null)[] = await Promise.all(
-        blobs.map((blob) => store.get(canonicalKey(blob.key), { type: 'text' })),
+        keys.map((key) => store.get(key, { type: 'text' })),
       );
       const ids = new Set<string>();
       for (const raw of raws) {
@@ -200,16 +202,6 @@ async function readHistoryReferences(): Promise<Map<string, DocumentKey[]>> {
     }
   }
   return references;
-}
-
-/** A listed key back in the form it was written; see `canonicalKey` in `./admin-content.mts`. */
-function canonicalKey(key: string): string {
-  if (!key.includes('%')) return key;
-  try {
-    return decodeURIComponent(key);
-  } catch {
-    return key;
-  }
 }
 
 /**
@@ -240,12 +232,17 @@ async function purgeUpload(id: string): Promise<void> {
   }
 }
 
-/** GET /admin/api/images — every stored photo with its dimensions, size, date and users. */
-async function listImages(store: ImageStore): Promise<Response> {
+/**
+ * GET /admin/api/images — every stored photo with its dimensions, size, date and the pages
+ * using it. `?history=1` adds which pages' saved versions still hold each one (`inHistory`, for
+ * the library's delete guard); without it — the photo pickers — that list stays empty, and the
+ * scan of every saved version is not made.
+ */
+async function listImages(store: ImageStore, withHistory: boolean): Promise<Response> {
   const [{ blobs }, references, history] = await Promise.all([
     store.list() as Promise<ImageListing>,
     readReferences(),
-    readHistoryReferences(),
+    withHistory ? readHistoryReferences() : Promise.resolve(new Map<string, DocumentKey[]>()),
   ]);
   // Photos only: the small copies under `w800/` share the store but belong to the photo with
   // the same id, and their slash fails `IMAGE_ID`.
@@ -370,49 +367,53 @@ async function uploadImage(store: ImageStore, request: Request): Promise<Respons
 
   // `onlyIfNew` cannot realistically trip — six random characters inside a one-second bucket —
   // but if it ever did, an unconditional write would silently replace someone's photo.
-  const result: { modified: boolean; etag?: string } = await store.set(id, buffer, {
-    onlyIfNew: true,
-    metadata: {
-      width: record.width,
-      height: record.height,
-      bytes: record.bytes,
-      uploadedAt: record.uploadedAt,
-      originalName: record.originalName,
-    },
-  });
-  if (!result.modified) {
-    return failure(409, 'That photo could not be saved — try uploading it again.');
-  }
-  // `@netlify/blobs` reports `modified: true` for ANY answer to a conditional write other than
-  // 412, a refused or failed one included. A real write comes back with its etag; without one,
-  // the photo must be readable under its id before the upload is called a success.
-  if (typeof result.etag !== 'string' || result.etag === '') {
-    let stored = false;
-    try {
+  // Whether it landed is `writeOutcome`'s call (`../shared/write-outcome.ts`): a real write
+  // comes back with its etag; otherwise the photo must read back under its id with this upload's
+  // own stamp — the id was minted for this request, so nothing else can have written it.
+  const landing = await writeOutcome(
+    await store.set(id, buffer, {
+      onlyIfNew: true,
+      metadata: {
+        width: record.width,
+        height: record.height,
+        bytes: record.bytes,
+        uploadedAt: record.uploadedAt,
+        originalName: record.originalName,
+      },
+    }),
+    async () => {
       const entry = await store.getMetadata(id);
-      stored =
-        entry !== null &&
-        entry.metadata.uploadedAt === record.uploadedAt &&
-        entry.metadata.bytes === record.bytes;
-    } catch {
-      stored = false;
-    }
-    if (!stored) {
-      return failure(503, 'The photo did not finish uploading — try again in a moment.');
-    }
+      return {
+        matches:
+          entry !== null &&
+          entry.metadata.uploadedAt === record.uploadedAt &&
+          entry.metadata.bytes === record.bytes,
+      };
+    },
+  );
+  if (landing.outcome !== 'landed') {
+    return landing.outcome === 'conflict'
+      ? failure(409, 'That photo could not be saved — try uploading it again.')
+      : failure(503, 'The photo did not finish uploading — try again in a moment.');
   }
 
   // The small copy goes in after the photo, and failing to store it does not fail the upload:
   // the public endpoint answers `/images/uploads/w800/<id>` with the full photo when the copy
   // is missing, so a page that offers it in `srcset` still shows the right picture.
   if (small !== null) {
+    const key = smallImageKey(id);
     try {
-      const written: { modified: boolean } = await store.set(smallKey(id), small.buffer, {
-        onlyIfNew: true,
-        metadata: { width: small.width, height: small.height, bytes: small.buffer.byteLength },
-      });
-      if (!written.modified) {
-        console.warn(`[admin-images] a small copy of ${id} already existed and was kept`);
+      const copy = await writeOutcome(
+        await store.set(key, small.buffer, {
+          onlyIfNew: true,
+          metadata: { width: small.width, height: small.height, bytes: small.buffer.byteLength },
+        }),
+        async () => ({
+          matches: (await store.getMetadata(key))?.metadata.bytes === small.buffer.byteLength,
+        }),
+      );
+      if (copy.outcome !== 'landed') {
+        console.warn(`[admin-images] the small copy of ${id} was not stored (${copy.outcome})`);
       }
     } catch (error) {
       console.warn(`[admin-images] the small copy of ${id} was not stored`, error);
@@ -465,18 +466,22 @@ async function readStored(store: ImageStore, key: string): Promise<StoredBlob | 
 /**
  * Put a deleted blob back under its own key, with its own bytes and metadata. `onlyIfNew`:
  * anything written there since is not this delete's to overwrite (ids are never reused, so in
- * practice nothing is). Read back when the store answers without an etag, as on upload.
+ * practice nothing is). Confirmed by `writeOutcome`, as on upload — a lost answer retried into a
+ * 412 means the blob is already back.
  */
 async function putBack(store: ImageStore, blob: StoredBlob): Promise<boolean> {
   try {
-    const result: { modified: boolean; etag?: string } = await store.set(blob.key, blob.data, {
-      onlyIfNew: true,
-      metadata: blob.metadata,
-    });
-    if (!result.modified) return false;
-    if (typeof result.etag === 'string' && result.etag !== '') return true;
-    const back = await store.getMetadata(blob.key);
-    return back !== null && back.metadata.bytes === blob.metadata.bytes;
+    const landing = await writeOutcome(
+      await store.set(blob.key, blob.data, { onlyIfNew: true, metadata: blob.metadata }),
+      async () => {
+        const back = await store.getMetadata(blob.key);
+        return { matches: back !== null && back.metadata.bytes === blob.metadata.bytes };
+      },
+    );
+    if (landing.outcome === 'unknown') {
+      console.error(`[admin-images] could not confirm that ${blob.key} is back`);
+    }
+    return landing.outcome === 'landed';
   } catch (error) {
     console.error(error);
     return false;
@@ -484,72 +489,127 @@ async function putBack(store: ImageStore, blob: StoredBlob): Promise<boolean> {
 }
 
 /**
- * DELETE /admin/api/images/:id — refused while any saved document, or any saved version of one,
- * still points at it; and undone if a publish that shows it lands while the delete runs.
+ * Put back everything a delete removed: the small copy before the photo, so that a request in
+ * between never finds the photo without its copy (`./uploads.mts` would answer the copy's URL with
+ * the full photo, cached for good). Each one gets a second try. True when all are back.
  */
-async function deleteImage(store: ImageStore, id: string): Promise<Response> {
-  const entry = await store.getMetadata(id);
+async function putBackAll(store: ImageStore, removed: readonly StoredBlob[]): Promise<boolean> {
+  let allBack = true;
+  for (const blob of [...removed].reverse()) {
+    const back = (await putBack(store, blob)) || (await putBack(store, blob));
+    if (!back) allBack = false;
+  }
+  return allBack;
+}
+
+/** The pages' labels, for a sentence: "Home page, Menu". */
+const labelsOf = (docs: readonly DocumentKey[]): string =>
+  docs.map((doc) => DOCUMENTS[doc].label).join(', ');
+
+/**
+ * DELETE /admin/api/images/:id — refused while any saved document, or any saved version of one,
+ * still points at it; and undone if a publish that shows it lands while the delete runs, or if
+ * the delete cannot finish.
+ */
+async function deleteImage(
+  store: ImageStore,
+  id: string,
+  context: FunctionContext | undefined,
+): Promise<Response> {
+  // The three reads are independent, so they go out together.
+  const [entry, references, history] = await Promise.all([
+    store.getMetadata(id),
+    readReferences(),
+    readHistoryReferences(),
+  ]);
   if (entry === null) {
     return failure(404, `No photo found for "${id}".`);
   }
-  const usedBy = (await readReferences()).get(id) ?? [];
+  const usedBy = references.get(id) ?? [];
   if (usedBy.length > 0) return inUse(usedBy);
-  const inHistory = (await readHistoryReferences()).get(id) ?? [];
+  const inHistory = history.get(id) ?? [];
   if (inHistory.length > 0) {
-    const where = inHistory.map((doc) => DOCUMENTS[doc].label).join(', ');
     return failure(
       409,
-      `That photo is still kept in the saved versions of the ${where}, and restoring one of them would put it back on the site. It can be deleted once those versions have aged out of the history.`,
+      `That photo is still kept in the saved versions of the ${labelsOf(inHistory)}, and restoring one of them would put it back on the site. It can be deleted once those versions have aged out of the history.`,
     );
   }
 
   // Everything the delete removes is read first — bytes and metadata — so it can be put back
   // exactly if a publish turns out to have claimed the photo in the meantime.
-  const [main, small] = await Promise.all([readStored(store, id), readStored(store, smallKey(id))]);
+  const [main, small] = await Promise.all([
+    readStored(store, id),
+    readStored(store, smallImageKey(id)),
+  ]);
   if (main === null) {
     return failure(404, `No photo found for "${id}".`);
   }
-  await store.delete(id);
-  if (small !== null) await store.delete(small.key);
 
-  // The re-check that closes the race with a publish: one that checked its photos before this
-  // delete landed, and wrote after the checks above, references the photo by now.
-  const claimedBy = (await readReferences()).get(id) ?? [];
-  if (claimedBy.length > 0) {
-    const restored = await putBack(store, main);
-    if (small !== null) await putBack(store, small);
-    if (!restored) {
-      // The publish re-checks its photos after its own write and rolls itself back when one is
-      // gone, so the live page is still safe; this only has to be findable in the logs.
-      console.error(`[admin-images] ${id} was claimed mid-delete and could not be put back`);
+  // The photo goes first: a publish's photo check looks for it under its own id, so its delete
+  // is the moment a publish starts seeing the photo as gone. Anything that fails from here on —
+  // the copy's delete, the re-check — puts back what was removed, rather than leaving the
+  // photo half-deleted with its copy still served or a page pointing at it.
+  const removed: StoredBlob[] = [];
+  let claimedBy: DocumentKey[];
+  try {
+    await store.delete(main.key);
+    removed.push(main);
+    if (small !== null) {
+      await store.delete(small.key);
+      removed.push(small);
     }
-    return inUse(claimedBy);
+    // The re-check that closes the race with a publish: one that checked its photos before this
+    // delete landed, and wrote after the checks above, references the photo by now.
+    claimedBy = (await readReferences()).get(id) ?? [];
+  } catch (error) {
+    console.error(error);
+    if (await putBackAll(store, removed)) {
+      return failure(503, 'The photo could not be deleted just now — nothing was changed. Try again in a moment.');
+    }
+    console.error(`[admin-images] ${id}: a delete failed partway and could not be put back`);
+    return failure(500, 'The delete stopped partway and the photo could not be put back — reload the photo library before trying again.');
   }
 
-  await purgeUpload(id);
+  if (claimedBy.length > 0) {
+    if (await putBackAll(store, removed)) return inUse(claimedBy);
+    // A publish that already passed its own photo re-check is live and showing the photo, and
+    // the photo could not be restored: say so, naming the page, rather than claim it is in use.
+    console.error(`[admin-images] ${id} was claimed mid-delete and could not be put back`);
+    return failure(
+      500,
+      `The photo was deleted while the ${labelsOf(claimedBy)} was being published with it, and it could not be put back — open that page in its editor, choose another photo, and publish it again.`,
+    );
+  }
+
+  // The purge is best-effort and the photo is already gone: hand it to the platform to finish
+  // after the answer is sent where it can (`context.waitUntil`), so the owner is not kept waiting.
+  const purge = purgeUpload(id);
+  if (context?.waitUntil) context.waitUntil(purge);
+  else await purge;
   return json(200, { ok: true });
 }
 
-export default async function adminImages(request: Request): Promise<Response> {
+export default async function adminImages(
+  request: Request,
+  context?: FunctionContext,
+): Promise<Response> {
   try {
-    const username = process.env.ADMIN_USERNAME ?? '';
-    const password = process.env.ADMIN_PASSWORD ?? '';
-    if (username === '' || password === '') {
-      // Same fail-closed posture as the edge guard.
-      return failure(503, 'Admin is not configured.');
-    }
-    if (!checkBasicAuth(request.headers.get('authorization'), username, password)) {
-      return unauthorized();
-    }
+    // The edge guard's checks, repeated here: an older production deploy, unset credentials,
+    // wrong credentials (see `../shared/admin-gate.ts`).
+    const refused = guardAdmin(request, context);
+    if (refused !== null) return refused;
 
-    const route = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
+    const url = new URL(request.url);
+    const route = url.pathname.replace(/\/+$/, '') || '/';
     // Strong consistency store-wide: `list()` has no per-operation override, and a library
     // that does not show the photo just uploaded is a library the owner cannot use.
     const store = getStore(IMAGE_STORE, { consistency: 'strong' });
 
     if (route === IMAGES_ROUTE) {
       // Awaited, not returned bare, so a rejection lands in this function's catch.
-      if (request.method === 'GET') return await listImages(store);
+      if (request.method === 'GET') {
+        return await listImages(store, url.searchParams.get('history') === '1');
+      }
       if (request.method === 'POST') {
         return guardWrite(request, 'multipart/form-data') ?? (await uploadImage(store, request));
       }
@@ -565,7 +625,7 @@ export default async function adminImages(request: Request): Promise<Response> {
       }
       if (request.method === 'GET') return await getImage(store, id);
       if (request.method === 'DELETE') {
-        return guardWrite(request, null) ?? (await deleteImage(store, id));
+        return guardWrite(request, null) ?? (await deleteImage(store, id, context));
       }
       return failure(405, `${request.method} is not supported here — use GET or DELETE.`);
     }

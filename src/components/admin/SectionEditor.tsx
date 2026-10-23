@@ -5,6 +5,7 @@ import { CheckboxField, TextField } from '@/components/admin/fields';
 import type { SectionOption } from '@/components/admin/ItemEditor';
 import { ItemEditor } from '@/components/admin/ItemEditor';
 import { ToppingsEditor } from '@/components/admin/ToppingsEditor';
+import { menuSectionDomId } from '@/components/MenuSection';
 import type { MenuSectionContent } from '@/lib/menu-content';
 
 /** Everything a section card can do, bound to its index by the editor. */
@@ -62,8 +63,9 @@ export function SectionEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-bold tracking-[0.16em] text-wood uppercase">
           {`Section ${sectionIndex + 1} of ${sectionCount}`}
+          {/* The anchor the menu page really links to — section ids are namespaced there. */}
           <span className="ml-2 font-mono text-bark/75 normal-case tracking-normal">
-            {`#${section.id}`}
+            {`#${menuSectionDomId(section.id)}`}
           </span>
         </p>
         <div className="flex items-center gap-1.5">

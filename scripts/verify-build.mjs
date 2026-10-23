@@ -125,30 +125,24 @@ const business = await import(pathToFileURL(path.join(ROOT, 'src', 'data', 'busi
 /**
  * `menu-content.ts` is loaded for one constant it restates from the default menu. Unlike the two
  * modules above it imports siblings, by extensionless relative specifiers (the function bundler
- * and Next fill the extension in), so a resolve hook does the same here — the relative branch of
- * the hook in `scripts/smoke-admin.mjs`, and nothing else.
+ * and Next fill the extension in), so the resolve hook the smoke harness and `dev:admin` register
+ * does the same here (`./ts-resolve-hook.mjs`).
  */
-const RESOLVE_TS = `
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-export async function resolve(specifier, context, nextResolve) {
-  if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
-    const direct = new URL(specifier, context.parentURL);
-    if (!existsSync(fileURLToPath(direct))) {
-      for (const extension of ['.ts', '/index.ts']) {
-        const candidate = new URL(direct.href + extension);
-        if (existsSync(fileURLToPath(candidate))) return nextResolve(candidate.href, context);
-      }
-    }
-  }
-  return nextResolve(specifier, context);
-}
-`;
-register(`data:text/javascript,${encodeURIComponent(RESOLVE_TS)}`);
+register('./ts-resolve-hook.mjs', import.meta.url);
 const menuContent = await import(pathToFileURL(path.join(ROOT, 'src', 'lib', 'menu-content.ts')).href);
+/**
+ * The document registry — the publish endpoint's own validators — through the same hook. The
+ * gate renders only the defaults, so it runs each default through the validator that will judge
+ * the owner's first publish from it: a default the validator refuses would ship, and then block
+ * her on a field she never touched.
+ */
+const contentDocs = await import(pathToFileURL(path.join(ROOT, 'src', 'lib', 'content-docs.ts')).href);
 const {
   WRONG_CASING,
   PHONE_LIKE,
+  PRICE_CURRENCY,
+  PRICE_WORDS,
+  PRICE_DECIMAL,
   CONTENT_TOKENS,
   SEASON_TOKEN,
   findForbidden,
@@ -189,7 +183,9 @@ const SECURITY_HEADERS = {
  * `canonical: null` marks a page that must not be indexed: no canonical link, exactly one
  * noindex robots tag, and automatic exclusion from the sitemap's expected set. `copy: false`
  * marks a page that deliberately carries no contact or hours copy of its own, so the `phone`
- * and `hours` groups skip it — every other check still applies in full.
+ * and `hours` groups skip it — every other check still applies in full. `hoursTable: false`
+ * marks a page that prints contact and hours copy without the site footer: both groups read its
+ * copy like any other page's, but the footer's full-week hours table is not expected there.
  */
 const PAGES = [
   {
@@ -298,13 +294,15 @@ const PAGES = [
   },
   // The page editors' preview frames: each renders one public page from a draft, so it
   // carries that page's <h1> and contact copy, but it is admin — noindex, no canonical. All
-  // three are the one dynamic `[doc]` page, which is why they share an `appRoute`.
+  // three are the one dynamic `[doc]` page, which is why they share an `appRoute`. What they
+  // print is that page's body (from the defaults, on this run), so its phone and hours are
+  // checked like any page's; only the site footer, and the week table in it, is missing.
   {
     group: 'page:/admin/preview/home/',
     route: '/admin/preview/home/',
     appRoute: '/admin/preview/[doc]',
     canonical: null,
-    copy: false,
+    hoursTable: false,
     requiredTypes: ['Restaurant', 'WebSite'],
   },
   {
@@ -312,7 +310,7 @@ const PAGES = [
     route: '/admin/preview/about/',
     appRoute: '/admin/preview/[doc]',
     canonical: null,
-    copy: false,
+    hoursTable: false,
     requiredTypes: ['Restaurant', 'WebSite'],
   },
   {
@@ -320,7 +318,7 @@ const PAGES = [
     route: '/admin/preview/directions/',
     appRoute: '/admin/preview/[doc]',
     canonical: null,
-    copy: false,
+    hoursTable: false,
     requiredTypes: ['Restaurant', 'WebSite'],
   },
 ];
@@ -481,6 +479,15 @@ function renderedText(html) {
 }
 
 /**
+ * Hashed asset references: every `/_next/static/…` path (the chunks, stylesheets and fonts the
+ * `<link rel=preload|stylesheet>` tags and the RSC payload name) and the `?favicon.<hash>.ico`
+ * style query Next appends to metadata icons. The hashes are base-36 runs split by `-` and `_`,
+ * so one can spell a bounded word by chance, and no copy is at fault when it does: the vocabulary
+ * scans of the markup and the payload drop these first. Global — use it with `.replace` only.
+ */
+const ASSET_REFS = /\/_next\/static\/[^\s"'\])},]*|\?(?:favicon|icon|apple-icon)\.[^\s"']*/g;
+
+/**
  * Every script and stylesheet source under a directory (`src/`, `netlify/`): `.ts`, `.tsx`,
  * `.mts`, `.mjs`, `.js`, `.css`. BRIEF §5 requires the forbidden-word scan to cover the sources
  * too, not just what the pages happen to render this build.
@@ -619,9 +626,10 @@ function attributeText(html) {
 /**
  * The inline RSC flight payload — the `self.__next_f.push([1,"…"])` scripts that carry the page
  * again for client navigation. Each string is JSON-decoded first, so escaped characters read as
- * what they are. Chunk paths (`/_next/static/…`, whose hashes can spell anything) and the
- * exempt `MobileNav` identifier are dropped. Returns the decoded text and how many pushes were
- * found, so a format change that empties the scan fails loudly instead of passing.
+ * what they are. Hashed asset references (`ASSET_REFS`: chunk paths and icon queries, whose
+ * hashes can spell anything) and the exempt `MobileNav` identifier are dropped. Returns the
+ * decoded text and how many pushes were found, so a format change that empties the scan fails
+ * loudly instead of passing.
  */
 function flightPayload(html) {
   const parts = [];
@@ -636,7 +644,7 @@ function flightPayload(html) {
   }
   const text = parts
     .join('\n')
-    .replace(/\/_next\/static\/[^\s"'\])},]*/g, ' ')
+    .replace(ASSET_REFS, ' ')
     .split('MobileNav')
     .join(' ');
   return { text, count: parts.length };
@@ -648,6 +656,49 @@ function jsonStrings(value, acc = []) {
   else if (Array.isArray(value)) for (const item of value) jsonStrings(item, acc);
   else if (value && typeof value === 'object') for (const item of Object.values(value)) jsonStrings(item, acc);
   return acc;
+}
+
+/**
+ * robots.txt read the way RFC 9309 has a crawler read it: `#` starts a comment, field names are
+ * case-insensitive, a run of User-Agent lines opens one group and the Allow/Disallow lines after
+ * it are that group's rules, and a User-Agent line after a rule opens the next group. Other
+ * records (`Sitemap:`) belong to no group and end none; a rule before any User-Agent line
+ * belongs to nobody and is dropped. Agents come back lowercased, rule fields too.
+ *
+ * @returns {{ agents: string[], rules: { field: 'allow' | 'disallow', value: string }[] }[]}
+ */
+function parseRobots(body) {
+  const robotGroups = [];
+  let open = null;
+  for (const raw of body.split(/\r\n|\r|\n/)) {
+    const line = /^\s*([A-Za-z-]+)\s*:\s*(.*?)\s*$/.exec(raw.replace(/#.*/, ''));
+    if (!line) continue;
+    const field = line[1].toLowerCase();
+    if (field === 'user-agent') {
+      if (open === null || open.rules.length > 0) {
+        open = { agents: [], rules: [] };
+        robotGroups.push(open);
+      }
+      open.agents.push(line[2].toLowerCase());
+    } else if ((field === 'allow' || field === 'disallow') && open !== null) {
+      open.rules.push({ field, value: line[2] });
+    }
+  }
+  return robotGroups;
+}
+
+/**
+ * A robots.txt path pattern as a RegExp, with the wildcard semantics of RFC 9309 (and Google and
+ * Bing): matched from the start of the path, `*` any run of characters, a final `$` the end of the
+ * path, everything else literal.
+ */
+function robotsPattern(value) {
+  const anchored = value.endsWith('$');
+  const literal = (anchored ? value.slice(0, -1) : value)
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp(`^${literal}${anchored ? '$' : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -960,9 +1011,36 @@ async function runChecks(base) {
   const robots = await get('/robots.txt');
   check(robots.status === 200, `GET /robots.txt answered ${robots.status}`);
   documents.push({ label: 'GET /robots.txt', contents: robots.body });
-  check(/^user-agent:\s*\*/im.test(robots.body), 'no wildcard User-Agent rule');
-  // `allow: /` in both modes: a pre-launch page's noindex only works if crawlers can read it.
-  check(/^allow:\s*\//im.test(robots.body), 'does not allow /');
+  // Read by group, as a crawler reads it: a rule somewhere in the file is not a rule for every
+  // crawler, and a group of its own for one bot (`User-Agent: GPTBot` + `Disallow: /`) is that
+  // bot's business, not the public pages'.
+  const wildcardGroups = parseRobots(robots.body).filter((entry) => entry.agents.includes('*'));
+  check(
+    wildcardGroups.length === 1,
+    `expected exactly one "User-Agent: *" group, found ${wildcardGroups.length}`,
+  );
+  // A crawler merges every group that names it, so a second one is read along with the first.
+  const wildcardRules = wildcardGroups.flatMap((entry) => entry.rules);
+  // `Allow: /` in both modes: a pre-launch page's noindex only works if crawlers can read it.
+  check(
+    wildcardRules.some((rule) => rule.field === 'allow' && rule.value === '/'),
+    'the "User-Agent: *" group has no exact "Allow: /" line',
+  );
+  // For the same reason no Disallow may reach a public page. Stricter than a crawler on purpose:
+  // RFC 9309 lets the longest matching rule win, so a longer Allow can out-rank a Disallow, but a
+  // page that is crawlable only because one rule out-ranks another is one edit from being blocked.
+  // So any Disallow pattern that matches a canonical path fails, whatever the Allow lines say.
+  for (const rule of wildcardRules) {
+    // An empty `Disallow:` disallows nothing.
+    if (rule.field !== 'disallow' || rule.value === '') continue;
+    const pattern = robotsPattern(rule.value);
+    for (const canonical of CANONICAL_PATHS) {
+      check(
+        !pattern.test(canonical),
+        `"Disallow: ${rule.value}" in the "User-Agent: *" group blocks ${canonical}, a public page`,
+      );
+    }
+  }
   if (INDEXABLE) {
     check(
       /^sitemap:\s*https?:\/\/\S+\/sitemap\.xml\s*$/im.test(robots.body),
@@ -1006,10 +1084,13 @@ async function runChecks(base) {
   group('forbidden words');
   for (const { label, contents, html } of documents) {
     if (html) {
-      // The markup with its attributes (ids, hrefs, classes): banned words only — a lowercase
-      // slug like `menu--wildflour-specials` is not a casing mistake. What people read or hear
-      // — the visible text and the alt/title/label/meta attributes — gets the casing rule too.
-      scanForbidden(renderedText(contents), label, current.failures, { casing: false });
+      // The markup with its attributes (ids, hrefs, classes), less the hashed asset references
+      // (`ASSET_REFS`), whose hashes no copy controls: banned words only — a lowercase slug like
+      // `menu--wildflour-specials` is not a casing mistake. What people read or hear — the
+      // visible text and the alt/title/label/meta attributes — gets the casing rule too.
+      scanForbidden(renderedText(contents).replace(ASSET_REFS, ' '), label, current.failures, {
+        casing: false,
+      });
       scanForbidden(visibleText(contents), `${label} (text)`, current.failures);
       scanForbidden(attributeText(contents), `${label} (attributes)`, current.failures);
       // JSON-LD is stripped along with the other scripts, so scan it from the parsed objects.
@@ -1018,13 +1099,17 @@ async function runChecks(base) {
         scanForbidden(jsonStrings(nodes).join('\n'), `${label} (JSON-LD)`, current.failures);
       }
       // The RSC flight payload repeats the page for client navigation. Banned words and the
-      // wrong number only: it legitimately carries `$undefined` and lowercase slugs.
+      // wrong number only: it legitimately carries `$undefined`, lowercase slugs, and the number
+      // in machine spellings (`tel:+19076120002`). So the digits are found with the validator's
+      // own `PHONE_LIKE` — which takes in a digit run on either side, and leaves the "1" of a
+      // leading "+1" out — and must be exactly the real number's, as `scanId` reads an id's.
       const flight = flightPayload(contents);
       check(flight.count > 0, `${label}: no inline RSC payload found — the flight scan read nothing`);
       scanForbidden(flight.text, `${label} (RSC payload)`, current.failures, { casing: false });
-      for (const match of normalizeCopy(flight.text).matchAll(/\(?907\)?[\s.-]?612[\s.-]?\d{4}/g)) {
+      for (const match of normalizeCopy(flight.text).matchAll(PHONE_LIKE)) {
+        const digits = match[0].replace(/\D/g, '');
         check(
-          match[0].replace(/\D/g, '').endsWith('0002'),
+          digits === '9076120002' || digits === '19076120002',
           `${label} (RSC payload): phone digits "${match[0]}" are not the real 907-612-0002`,
         );
       }
@@ -1032,6 +1117,20 @@ async function runChecks(base) {
       // sitemap.xml / robots.txt / manifest.webmanifest — copy, scanned whole.
       scanForbidden(contents, label, current.failures);
     }
+  }
+
+  // No prices are known, so none may be printed (they are posted at the counter): what a visitor
+  // reads on a public page — text, alt/title/meta attributes, structured data — with the
+  // validator's own price matchers.
+  group('prices');
+  for (const { label, contents, html } of documents) {
+    if (!html || label.startsWith('GET /admin')) continue;
+    const { nodes } = parseJsonLd(contents);
+    const text = normalizeCopy(
+      `${visibleText(contents)}\n${attributeText(contents)}\n${jsonStrings(nodes).join('\n')}`,
+    );
+    const price = text.match(PRICE_CURRENCY) ?? text.match(PRICE_WORDS) ?? text.match(PRICE_DECIMAL);
+    check(price === null, `${label}: "${price?.[0]}" reads as a price — prices are never printed on the site`);
   }
 
   // --- Forbidden words, the sources ----------------------------------------
@@ -1084,12 +1183,14 @@ async function runChecks(base) {
   for (const page of PAGES) {
     const entry = loaded.get(page.route);
     if (!entry) continue;
-    // Admin pages carry no contact copy at all; even the wrong-format scan would only trip on
-    // owner-editable admin chrome, not published copy. (The 404 page keeps that scan below.)
+    // The editor screens carry no contact copy at all; even the wrong-format scan would only trip
+    // on owner-editable admin chrome, not published copy. (The 404 page and the preview frames,
+    // which print a public page's body, keep that scan below.)
     if (page.copy === false) continue;
     const label = page.route;
     const text = renderedText(entry.html);
-    // 404 is a link list; it carries no contact block.
+    // Only the indexable pages must print and link the number: 404 is a link list with no contact
+    // block of its own, and a preview frame is an admin page no visitor reaches.
     if (page.canonical !== null) {
       check(text.includes(PHONE_DISPLAY), `${label}: does not render "${PHONE_DISPLAY}"`);
       check(entry.html.includes(PHONE_HREF), `${label}: no ${PHONE_HREF} link`);
@@ -1118,10 +1219,14 @@ async function runChecks(base) {
   for (const page of PAGES) {
     const entry = loaded.get(page.route);
     if (!entry) continue;
-    // Admin pages render no opening-hours copy, by design.
+    // The editor screens render no opening-hours copy, by design. The preview frames do (a public
+    // page's body), so they are read below like any page, short of the footer's week table.
     if (page.copy === false) continue;
     const label = page.route;
-    const text = visibleText(entry.html);
+    // What people read or hear, as the phone group reads it: the visible text plus the alt, title,
+    // label and meta attributes (the description, og: and twitter: cards) — a search snippet or a
+    // share card that states the hours is copy too, and must agree with the rest.
+    const text = `${visibleText(entry.html)}\n${attributeText(entry.html)}`;
     const ranges = findHoursRanges(text);
     check(ranges.length > 0, `${label}: renders no opening-hours range`);
     for (const range of ranges) {
@@ -1133,8 +1238,10 @@ async function runChecks(base) {
     for (const problem of findHoursProblems(text, CHECKS)) {
       check(false, `${label}: "${problem.found}" contradicts the opening hours (${CHECKS.hoursDisplay})`);
     }
-    // Every page lists the week in the footer's hours table: each closed day's row must say
-    // Closed, and each open day's row the real range — so a row can't drift from the rules.
+    // Every page in the site frame lists the week in the footer's hours table: each closed day's
+    // row must say Closed, and each open day's row the real range — so a row can't drift from the
+    // rules. A preview frame has no footer (`hoursTable: false`), so no table is expected there.
+    if (page.hoursTable === false) continue;
     const rows = new Map(
       [...entry.html.matchAll(/<th[^>]*>\s*([A-Za-z]+day)\s*<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map(
         (match) => [match[1], normalizeCopy(decodeEntities(match[2].replace(/<[^>]+>/g, ''))).trim()],
@@ -1197,6 +1304,21 @@ async function runChecks(base) {
     menuDefault.page?.specialsLead === menuContent.DEFAULT_SPECIALS_LEAD,
     `DEFAULT_SPECIALS_LEAD in src/lib/menu-content.ts is "${menuContent.DEFAULT_SPECIALS_LEAD}", but the menu default's page.specialsLead is "${menuDefault.page?.specialsLead}"`,
   );
+
+  // --- The defaults pass the publish validator ---------------------------------------------
+  // Everything the validator enforces and the page checks above cannot see (prices, the steers
+  // a publish refuses, structural rules) — run on each default exactly as a publish would.
+  group('defaults ↔ publish validator');
+  for (const key of contentDocs.DOCUMENT_KEYS) {
+    const value = JSON.parse(
+      await readFile(path.join(ROOT, 'src', 'data', 'defaults', `${key}.json`), 'utf8'),
+    );
+    const { document, issues } = contentDocs.DOCUMENTS[key].validate(value, CONTENT_RULES);
+    check(document !== null, `src/data/defaults/${key}.json does not pass the publish validator's structure check`);
+    for (const issue of issues) {
+      check(false, `src/data/defaults/${key}.json ${issue.path || '(document)'}: ${issue.message}`);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

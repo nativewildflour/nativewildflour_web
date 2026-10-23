@@ -1,10 +1,4 @@
-import { BannockIntro } from '@/components/home/BannockIntro';
-import { FacebookCta } from '@/components/home/FacebookCta';
-import { HomeHero } from '@/components/home/HomeHero';
-import { HomeTestimonial } from '@/components/home/HomeTestimonial';
-import { MeetKelly } from '@/components/home/MeetKelly';
-import { MenuHighlights } from '@/components/home/MenuHighlights';
-import { VisitUs } from '@/components/home/VisitUs';
+import { HomeSections } from '@/components/home/HomeSections';
 import { DEFAULT_DESCRIPTION, DEFAULT_TITLE, buildMetadata } from '@/lib/seo';
 import { getContent } from '@/lib/server/content';
 
@@ -32,15 +26,5 @@ export default async function HomePage() {
     getContent('menu'),
   ]);
 
-  return (
-    <>
-      <HomeHero hero={home.hero} />
-      <BannockIntro content={home.bannock} />
-      <MenuHighlights content={home.highlights} sections={menu.sections} />
-      <VisitUs content={home.visit} />
-      <HomeTestimonial content={home.testimonial} />
-      <MeetKelly content={home.meetKelly} />
-      <FacebookCta content={home.facebook} />
-    </>
-  );
+  return <HomeSections home={home} menu={menu} />;
 }

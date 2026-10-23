@@ -1,13 +1,6 @@
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { JsonLd } from '@/components/JsonLd';
-import { AboutGrammy } from '@/components/about/AboutGrammy';
-import { AboutIntro } from '@/components/about/AboutIntro';
-import { AboutMadeInSkagway } from '@/components/about/AboutMadeInSkagway';
-import { AboutMeetKelly } from '@/components/about/AboutMeetKelly';
-import { AboutRecipe } from '@/components/about/AboutRecipe';
-import { AboutSayHello } from '@/components/about/AboutSayHello';
-import { AboutWhatIsBannock } from '@/components/about/AboutWhatIsBannock';
-import { bannockToppings } from '@/lib/menu-content';
+import { AboutSections } from '@/components/about/AboutSections';
 import type { BreadcrumbItem } from '@/lib/schema';
 import { breadcrumbSchema } from '@/lib/schema';
 import { buildMetadata } from '@/lib/seo';
@@ -38,16 +31,11 @@ export default async function AboutPage() {
 
   return (
     <>
-      <AboutIntro content={about.intro}>
-        <Breadcrumbs items={BREADCRUMBS} />
-      </AboutIntro>
-
-      <AboutMeetKelly content={about.meetKelly} />
-      <AboutGrammy content={about.grammy} />
-      <AboutRecipe content={about.recipe} toppings={bannockToppings(menu)} />
-      <AboutWhatIsBannock content={about.whatIsBannock} />
-      <AboutMadeInSkagway content={about.madeInSkagway} />
-      <AboutSayHello content={about.sayHello} />
+      <AboutSections
+        about={about}
+        menu={menu}
+        breadcrumbs={<Breadcrumbs items={BREADCRUMBS} />}
+      />
 
       <JsonLd id="schema-breadcrumb-about" data={breadcrumbSchema(BREADCRUMBS)} />
     </>

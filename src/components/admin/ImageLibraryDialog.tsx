@@ -16,7 +16,7 @@ import Image from 'next/image';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import type { DocumentKey, ImageRecord } from '@/components/admin/api';
-import { imagePreviewUrl, listImages } from '@/components/admin/api';
+import { imageThumbnailUrl, listImages } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
 import type { ImageRef } from '@/lib/content/images';
 
@@ -210,7 +210,7 @@ function ImageLibraryPanel({
                     >
                       {/* The picture is decoration here: the button is named by its text. */}
                       <Image
-                        src={imagePreviewUrl(image.id)}
+                        src={imageThumbnailUrl(image.id)}
                         alt=""
                         width={image.width}
                         height={image.height}

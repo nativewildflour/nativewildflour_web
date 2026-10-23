@@ -13,9 +13,45 @@ export interface MenuHighlightsProps {
   readonly sections: readonly MenuSectionContent[];
 }
 
+/**
+ * The span the last plain card of a run gets, by the run's length: on two columns an odd run
+ * leaves one card alone in its row, on three a run leaves one or two. Written out in full —
+ * Tailwind only generates classes it finds spelled out in the source.
+ */
+function closingSpan(run: number): string {
+  const spans: string[] = [];
+  if (run % 2 === 1) spans.push('sm:col-span-2');
+  if (run % 3 === 1) spans.push('lg:col-span-3');
+  else if (run % 3 === 2) spans.push('lg:col-span-2');
+  // The run fills its last row on three columns: undo the two-column span, which carries over.
+  else if (run % 2 === 1) spans.push('lg:col-span-1');
+  return spans.join(' ');
+}
+
+/**
+ * Per-card span classes, in the owner's order. A featured card takes the full row, so each run
+ * of plain cards before one (and the run after the last) has its final card widened to fill
+ * the row it ends: a featured card always starts a row, and no card is moved to plug a hole.
+ */
+function highlightSpans(featured: readonly boolean[]): string[] {
+  const spans = featured.map(() => '');
+  let run = 0;
+  featured.forEach((full, index) => {
+    if (!full) {
+      run += 1;
+      return;
+    }
+    if (run > 0) spans[index - 1] = closingSpan(run);
+    run = 0;
+  });
+  if (run > 0) spans[featured.length - 1] = closingSpan(run);
+  return spans;
+}
+
 /** "Menu highlights" — a short preview of the menu with a link to the full page. */
 export function MenuHighlights({ content, sections }: MenuHighlightsProps) {
   const highlights = sections.filter((section) => section.highlight !== false);
+  const spans = highlightSpans(highlights.map((section) => (section.toppings ?? []).length > 0));
 
   return (
     <Section
@@ -24,9 +60,9 @@ export function MenuHighlights({ content, sections }: MenuHighlightsProps) {
       lead={content.lead}
       width="6xl"
     >
-      {/* Dense packing: a full-row featured card that is not first would otherwise leave a
-          hole beside the card before it. */}
-      <ul className="grid grid-flow-row-dense grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Cards keep the owner's order; `highlightSpans` closes the gaps a full-row featured
+          card would leave, without moving any card out of place. */}
+      <ul className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {highlights.map((section, index) => {
           const toppings = section.toppings ?? [];
           const featured = toppings.length > 0;
@@ -37,7 +73,7 @@ export function MenuHighlights({ content, sections }: MenuHighlightsProps) {
               className={`relative rounded-3xl p-6 shadow-card transition duration-300 ease-out motion-safe:hover:-translate-y-1 hover:shadow-lift ${
                 featured
                   ? 'bg-gradient-to-br from-snow to-wheat/20 ring-2 ring-wheat sm:col-span-2 lg:col-span-3 sm:p-8'
-                  : 'bg-snow ring-1 ring-bark/10'
+                  : `bg-snow ring-1 ring-bark/10 ${spans[index] ?? ''}`.trim()
               }`}
             >
               {featured ? (

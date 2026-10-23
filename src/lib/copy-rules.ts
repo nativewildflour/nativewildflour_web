@@ -143,16 +143,25 @@ function describeWeek(openDays: ReadonlySet<number>, opens: string, closes: stri
 // ---------------------------------------------------------------------------
 
 /**
- * The text every matcher reads: soft hyphens and zero-width characters dropped, every dash and
- * hyphen variant (en/em dash, U+2011 non-breaking hyphen, minus sign, …) folded to `-`, every
- * space variant (no-break, narrow no-break, figure, thin, …) folded to a plain space, and runs
- * of spaces collapsed. Line breaks survive (as single `\n`) because the hours matchers treat
- * them as sentence ends. Without this, a wrong phone number typed with non-breaking hyphens, or a banned word
- * with an invisible character in the middle, would sail past patterns written for ASCII.
+ * The invisible format characters a paste can carry in the Basic Multilingual Plane — soft
+ * hyphens, zero-width spaces and joiners, direction marks and embeddings, variation selectors,
+ * fillers — as a character-class body, for the patterns that must see past them in raw text (the
+ * content tokens). `normalizeCopy` drops these and every other default-ignorable character.
+ */
+const INVISIBLE = String.raw`\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0`;
+
+/**
+ * The text every matcher reads: soft hyphens, zero-width and direction-mark characters (every
+ * default-ignorable code point) dropped, every dash and hyphen variant (en/em dash, U+2011
+ * non-breaking hyphen, minus sign, …) folded to `-`, every space variant (no-break, narrow
+ * no-break, figure, thin, …) folded to a plain space, and runs of spaces collapsed. Line breaks
+ * survive (as single `\n`) because the hours matchers treat them as sentence ends. Without this,
+ * a wrong phone number typed with non-breaking hyphens, or a banned word with an invisible
+ * character in the middle, would sail past patterns written for ASCII.
  */
 export function normalizeCopy(text: string): string {
   return text
-    .replace(/[\u00AD\u180E\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/\p{Default_Ignorable_Code_Point}/gu, '')
     .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
     .replace(/[^\S\n]+/g, ' ')
     .replace(/ ?\n[\s]*/g, '\n');
@@ -167,9 +176,12 @@ export function normalizeCopy(text: string): string {
 const TIME = String.raw`(?:noon|midday|midnight|\d{1,2}(?:[:.]\d{2})?(?:\s*[ap]m(?![a-z]))?)`;
 const RANGE_SEPARATOR = String.raw`(?:-|\bto\b|\buntil\b|\btill?\b|'til\b|\bthrough\b|\bthru\b)`;
 
-/** `9 AM – 4 PM`, `9:00am to 4:00pm`, `9 until 4 p.m.`, `11 till noon`, … */
+/**
+ * `9 AM – 4 PM`, `9:00am to 4:00pm`, `9 until 4 p.m.`, `11 till noon`, … — never starting inside a
+ * number ("10:30", "1.5"), but right after a colon or a full stop that ends a word ("Hours:9 AM").
+ */
 const TIME_RANGE = new RegExp(
-  String.raw`(?<![\d:.])(${TIME})\s*${RANGE_SEPARATOR}\s*(${TIME})(?!\d)`,
+  String.raw`(?<!\d[:.]?)(${TIME})\s*${RANGE_SEPARATOR}\s*(${TIME})(?!\d)`,
   'gi',
 );
 /** "open at 7 AM", "opens from 10:30 am", "opening 8am". */
@@ -180,7 +192,13 @@ const CLOSES_AT = new RegExp(
   'gi',
 );
 
-const DAY = String.raw`(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)s?\.?(?![a-z])`;
+/**
+ * A day name or abbreviation, plural or not ("Tues", "Thurs.", "Saturdays"). Each spelling has
+ * exactly one way to match — the trailing `s?` is the only optional "s" — because the day-list
+ * patterns repeat this, and two ways per day would make a failing match on a long list of days
+ * backtrack exponentially.
+ */
+const DAY = String.raw`(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thur|thu|fri|sat)s?\.?(?![a-z])`;
 const DAY_WORD = new RegExp(String.raw`\b${DAY}`, 'gi');
 const DAY_RANGE = new RegExp(
   String.raw`\b(${DAY})\s*(?:-|\bto\b|\bthrough\b|\bthru\b|\buntil\b|\btill?\b)\s*(${DAY})`,
@@ -188,15 +206,109 @@ const DAY_RANGE = new RegExp(
 );
 /** Claims of opening every day of the week. "Fresh every day" is about the baking, not hours. */
 const EVERY_DAY = [
-  /\bopen\s+(?:daily|every\s*day|all\s+week(?:\s+long)?|(?:7|seven)\s+days)\b/gi,
+  /\bopens?\s+(?:daily|every\s*day|all\s+week(?:\s+long)?|(?:7|seven)\s+days)\b/gi,
   /\b(?:7|seven)\s+days\s+a\s+week\b/gi,
   /\b(?:daily|every\s*day)\s*,?\s*(?:from\s+)?(?:noon|\d{1,2}(?:[:.]\d{2})?\s*[ap]m(?![a-z]))/gi,
 ];
+/** The time first — "Open 9am–4pm daily", "9 AM–4 PM every day of the week". It counts only
+ *  after an opening word in the same clause (`OPENING_LEAD`), so "we bake from 6am every day"
+ *  and "up at 5 a.m. every day, so the bannock is hot when the doors open" stay fine. */
+const TIME_THEN_DAILY =
+  /(?:noon|\d{1,2}(?:[:.]\d{2})?\s*[ap]m(?![a-z]))\s*,?\s*(?:daily|every\s*day|(?:7|seven)\s+days)\b/gi;
+/**
+ * An opening word earlier in the same clause — what makes a time "the cafe's" for the readings
+ * that need it (`TIME_THEN_DAILY`, a bare closing number): no comma, semicolon or sentence end
+ * between the word and the time.
+ */
+const OPENING_LEAD = /\b(?:(?:re)?open(?:s|ing)?|hours)\b[^,;.!?\n]*$/i;
 const OPEN_WEEKENDS = /\bopen\s+(?:on\s+)?(?:the\s+)?weekends?\b/gi;
+/** "open", "opens", "opening", "reopen" — not "opened" (history, not hours). */
+const OPEN_WORD = /\b(?:re)?open(?:s|ing)?\b/i;
+/**
+ * Words just before a day that say the cafe is NOT open then — "closed (on) Saturdays",
+ * "except (for) Saturday", "other than", "apart from", "never on", "not (open) on", "aren't open",
+ * "off on Saturdays" (not "10% off"), "every day but Saturday" — optionally through a list joined
+ * by and/&/or ("closed Saturday and Sunday").
+ */
+const NOT_OPEN_BEFORE = new RegExp(
+  String.raw`(?:\b(?:closed|except(?:\s+for)?|excluding|other\s+than|apart\s+from)|(?<![%\d]\s?)\boff|(?:\bnot|\bnever|n['’]t)(?:\s+(?:be\s+)?open)?|\b(?:daily|every\s*day|all\s+week(?:\s+long)?|days\s+a\s+week)\s*,?\s+but(?:\s+not)?)\s+(?:on\s+)?(?:(?:every|any|all|most)\s+)?(?:${DAY}\s*(?:&|\band\b|\bor\b)\s*)*$`,
+  'i',
+);
+/** "off" right after the day — "Saturdays off", "Saturday: off", "Saturday is our day off" —
+ *  never "10% off" or "off-season" later in the clause. */
+const OFF_AFTER = /^\s*(?:[:-]\s*)?(?:(?:is|are)\s+(?:our|a|the)\s+)?(?:days?\s+)?off\b(?!-)/i;
+/** "closed" later in the clause ("Saturday: closed", "Saturdays we're closed"), unless it
+ *  belongs to the next day named ("open Saturday and closed Sunday"). */
+const CLOSED_AFTER = new RegExp(
+  String.raw`^[^,;]*?\bclosed\b(?!\s+(?:on\s+)?(?:(?:every|all|most)\s+)?${DAY})`,
+  'i',
+);
+/** A clock time, on folded text (`foldMeridiem`). */
+const CLOCK_TIME = /\d\s*[ap]m(?![a-z])|\b(?:noon|midday|midnight)\b/i;
+/**
+ * The cafe as the one closing — what makes a day it is open, named closed, a contradiction:
+ * "we're closed Sundays", "our day off", "the cafe is closed", a sentence that starts "Closed …",
+ * or a schedule line "Sundays: closed". The museum, the ferry or a visitor taking a day off are
+ * someone else's hours.
+ */
+const CAFE_CLOSES = new RegExp(
+  String.raw`^\W*(?:closed\b|(?:${DAY}[\s,&-]*(?:(?:and|to|through|thru)\s+)?)+:\s*closed\b)|\b(?:we|we['’]re|us|our|the\s+cafe|native\s+wild\s*flour)\b[^,;]*?\b(?:closed|off)\b`,
+  'i',
+);
+/** A capitalised day abbreviation's period ("Mon." in "Mon. – Sat.") doesn't end a sentence
+ *  when what follows continues it: not a capital, or a day / range word. */
+const DAY_ABBREVIATION_END = /\b(?:Sun|Mon|Tues?|Weds?|Thur?s?|Fri|Sat|SUN|MON|TUES?|WEDS?|THUR?S?|FRI|SAT)s?\.$/;
+const DAY_OR_RANGE_START = new RegExp(String.raw`^(?:${DAY}|(?:through|thru|to|till?|until|and)\b)`, 'i');
 
-/** `a.m.` / `p.m.` / `a. m.` -> `am` / `pm`, so one time pattern reads every spelling. */
+function sentencesOf(text: string): string[] {
+  const parts = text.split(/((?<=[.!?;·•|])\s+|\n+)/);
+  const out: string[] = [];
+  for (let index = 0; index < parts.length; index += 2) {
+    const piece = parts[index] ?? '';
+    const separator = parts[index - 1];
+    const previous = out.at(-1);
+    if (
+      previous !== undefined &&
+      separator !== undefined &&
+      !separator.includes('\n') &&
+      DAY_ABBREVIATION_END.test(previous) &&
+      (!/^[A-Z]/.test(piece) || DAY_OR_RANGE_START.test(piece))
+    ) {
+      out[out.length - 1] = `${previous}${separator}${piece}`;
+    } else {
+      out.push(piece);
+    }
+  }
+  return out;
+}
+
+/** What a bare number right after a time may be counting instead of naming an hour. */
+const COUNT_NOUN =
+  /^\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?|blocks?|miles?|mi\b|km\b|kilomet(?:er|re)s?|feet|ft\b|people|guests|persons?|shuttles?|ships?|bus(?:es)?|cars?|days?|weeks?|months?|years?|times?|more|later|after|before|earlier)\b/i;
+
+/** "between 9 AM and 4 PM" — a range, written the long way. */
+const BETWEEN = new RegExp(String.raw`\bbetween\s+(${TIME})\s*(?:and|&)\s*(?=${TIME})`, 'gi');
+
+/**
+ * The hours matchers' reading of a text, so one time pattern reads every spelling: curly
+ * apostrophes (smart punctuation's "’til") as `'`; `a.m.` / `p.m.` / `a. m.`, attached to the
+ * digit or not, as `am` / `pm`; "12 noon" as "noon"; an unambiguous 24-hour time ("17:00") as its
+ * 12-hour form; a meridiem run into "to" ("4 PMto") pulled apart; "between X and Y" as "X to Y".
+ */
 function foldMeridiem(text: string): string {
-  return text.replace(/\b([ap])\.\s?m\.?(?![a-z])/gi, '$1m');
+  return text
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/(?<![a-z])([ap])\.\s?m\.?(?![a-z])/gi, '$1m')
+    .replace(/\b12(?:[:.]00)?\s*(noon|midday|midnight)\b/gi, '$1')
+    // (Not where a dash and a number follow: "13:00–16:00" reads right with its first half bare,
+    // and "Luke 14:23-24" is no time at all.)
+    .replace(
+      /(?<![\d:.])(0\d|1[3-9]|2[0-3]):([0-5]\d)(?![\d:])(?!\s*[ap]m(?![a-z]))(?!\s*-\s*\d)/g,
+      (_, hour: string, minute: string) =>
+        `${Number(hour) % 12 || 12}:${minute} ${Number(hour) >= 12 ? 'pm' : 'am'}`,
+    )
+    .replace(/(\d\s*[ap]m)(?=(?:to|until|till?|thru|through)(?![a-z]))/gi, '$1 ')
+    .replace(BETWEEN, '$1 to ');
 }
 
 interface ClockTime {
@@ -233,9 +345,10 @@ export interface HoursRange {
 /**
  * Every opening-hours range in `text`: either side may be dotted (`9 a.m.`), carry minutes
  * (`9:00`, `9.30`), be `noon`, and the two may be joined by a dash, "to", "until", "till" or
- * "through". The closing time must carry am/pm (or be noon/midnight) — "5–8 minutes" is not a
- * range of hours; a bare opening number takes the closing time's half of the day unless that
- * would put it after the close ("9–4 PM" is 9 AM).
+ * "through". One side must carry am/pm (or be noon/midnight) — "5–8 minutes" is not a range of
+ * hours. In an opening clause a bare closing number takes the half of the day that follows the
+ * opening time ("Open 9am until 5" is 5 PM); a bare opening number takes the closing time's half
+ * unless that would put it after the close ("9–4 PM" is 9 AM).
  */
 export function findHoursRanges(text: string): HoursRange[] {
   const folded = foldMeridiem(normalizeCopy(text));
@@ -243,14 +356,30 @@ export function findHoursRanges(text: string): HoursRange[] {
   for (const match of folded.matchAll(TIME_RANGE)) {
     const first = parseTime(match[1] ?? '');
     const second = parseTime(match[2] ?? '');
-    if (second.suffix === null) continue;
+    // A bare closing number takes the opening time's half of the day only in an opening clause
+    // ("Open 9am until 5", "Hours: 9am until 5" — not "the shuttle runs from 7am to 9"), and only
+    // when nothing after it says it counts something else ("open at 9 AM - 5 minutes after …").
+    const start = match.index ?? 0;
+    const end = start + (match[0] ?? '').length;
+    const inferable =
+      OPENING_LEAD.test(folded.slice(0, start)) && !COUNT_NOUN.test(folded.slice(end));
+    const closing =
+      second.suffix ??
+      (first.suffix === null || !inferable
+        ? null
+        : first.hour % 12 <= second.hour % 12
+          ? first.suffix
+          : first.suffix === 'am'
+            ? 'pm'
+            : 'am');
+    if (closing === null) continue;
     const firstSuffix =
       first.suffix ??
-      (first.hour % 12 <= second.hour % 12 ? second.suffix : second.suffix === 'pm' ? 'am' : 'pm');
+      (first.hour % 12 <= second.hour % 12 ? closing : closing === 'pm' ? 'am' : 'pm');
     ranges.push({
       found: match[0] ?? '',
       opens: clock(first, firstSuffix),
-      closes: clock(second, second.suffix),
+      closes: clock(second, closing),
       index: match.index ?? 0,
     });
   }
@@ -317,17 +446,89 @@ export function findHoursProblems(text: string, checks: RuleChecks): HoursProble
   }
 
   const allWeek = checks.openDays.size === 7;
-  for (const sentence of folded.split(/(?<=[.!?;·•|])\s+|\n+/)) {
-    const aboutOpening =
-      /\bopen\b/i.test(sentence) || findHoursRanges(sentence).length > 0 || /\d\s*[ap]m(?![a-z])/i.test(sentence);
+  const closedDays = WEEK.map((_, day) => day).filter((day) => !checks.openDays.has(day));
+  // A range beside a time that leaves out an open day is reported only if the text as a
+  // whole never gives that day its hours ("Sunday 9am–4pm. Monday–Friday 9am–4pm." is the week).
+  const partialRuns: HoursProblem[] = [];
+  const daysWithHours = new Set<number>();
+  for (const sentence of sentencesOf(folded)) {
     const hasTime = findHoursRanges(sentence).length > 0;
+    // A day the cafe is open, named closed, only contradicts the hours when the cafe is the one
+    // closing — not the museum or the ferry.
+    const cafeCloses = CAFE_CLOSES.test(sentence);
+    const aboutOpening =
+      OPEN_WORD.test(sentence) || /\bclosed\b/i.test(sentence) || hasTime || /\d\s*[ap]m(?![a-z])/i.test(sentence);
+    // A clock time after the day ends the day's clause whatever the punctuation says — the period
+    // after "4 p.m." is folded away — so "Open Saturday 9am–4pm. Closed on holidays." is not read
+    // as Saturday closed.
+    const notOpen = (start: number, end: number) => {
+      const after = sentence.slice(end);
+      return (
+        NOT_OPEN_BEFORE.test(sentence.slice(0, start)) ||
+        OFF_AFTER.test(after) ||
+        CLOSED_AFTER.test(after.split(CLOCK_TIME)[0] ?? '')
+      );
+    };
 
-    if (!allWeek) {
+    const dayProblems: HoursProblem[] = [];
+    const namedClosed = new Set<number>();
+    const covered: [number, number][] = [];
+    for (const match of sentence.matchAll(DAY_RANGE)) {
+      const from = dayIndex(match[1] ?? '');
+      const to = dayIndex(match[2] ?? '');
+      // One day "to" itself is no range ("Closed Saturday – Saturdays we open…"): both day
+      // names are left to the single-day check below.
+      if (from === null || to === null || from === to) continue;
+      const start = match.index ?? 0;
+      const end = start + (match[0] ?? '').length;
+      covered.push([start, end]);
+      const span = daySpan(from, to);
+      if (notOpen(start, end)) {
+        // "Closed Monday–Tuesday" names open days closed.
+        for (const day of span) namedClosed.add(day);
+        if (cafeCloses && span.some((day) => checks.openDays.has(day))) {
+          dayProblems.push({ found: match[0] ?? '', kind: 'days' });
+        }
+        continue;
+      }
+      const takesClosedDay = span.some((day) => !checks.openDays.has(day));
+      // Beside a time, a range must be a whole run of open days: every day in it open, and the
+      // days either side of it closed. That accepts each run of a split week ("Sunday–Tuesday …
+      // Closed Wednesday. Thursday–Friday …") and refuses one that drops an open day.
+      const wholeRun =
+        span.length === 7 ||
+        (!takesClosedDay &&
+          !checks.openDays.has((from + 6) % 7) &&
+          !checks.openDays.has((to + 1) % 7));
+      if (takesClosedDay) dayProblems.push({ found: match[0] ?? '', kind: 'days' });
+      else if (hasTime) {
+        for (const day of span) daysWithHours.add(day);
+        if (!wholeRun) partialRuns.push({ found: match[0] ?? '', kind: 'days' });
+      }
+    }
+    for (const match of sentence.matchAll(DAY_WORD)) {
+      const start = match.index ?? 0;
+      if (covered.some(([from, to]) => start >= from && start < to)) continue;
+      const day = dayIndex(match[0] ?? '');
+      if (day === null) continue;
+      const closed = notOpen(start, start + (match[0] ?? '').length);
+      if (closed) namedClosed.add(day);
+      // An open day the cafe names closed contradicts the hours as much as a closed day named open.
+      const open = checks.openDays.has(day);
+      if (open ? closed && cafeCloses : !closed) dayProblems.push({ found: match[0] ?? '', kind: 'days' });
+      else if (hasTime && !closed) daysWithHours.add(day);
+    }
+    if (aboutOpening) problems.push(...dayProblems);
+
+    // "open daily except Saturdays" / "open every day (closed Saturdays)" is not an every-day
+    // claim — the sentence itself names every closed day as closed.
+    if (!allWeek && !closedDays.every((day) => namedClosed.has(day))) {
       // "Open 7 days a week" matches two of the patterns; report the claim once.
       const claimed: [number, number][] = [];
-      for (const pattern of EVERY_DAY) {
+      for (const pattern of [...EVERY_DAY, TIME_THEN_DAILY]) {
         for (const match of sentence.matchAll(pattern)) {
           const start = match.index ?? 0;
+          if (pattern === TIME_THEN_DAILY && !OPENING_LEAD.test(sentence.slice(0, start))) continue;
           const end = start + (match[0] ?? '').length;
           if (claimed.some(([from, to]) => start < to && end > from)) continue;
           claimed.push([start, end]);
@@ -338,42 +539,8 @@ export function findHoursProblems(text: string, checks: RuleChecks): HoursProble
     if (!checks.openDays.has(0) || !checks.openDays.has(6)) {
       for (const match of sentence.matchAll(OPEN_WEEKENDS)) problems.push({ found: match[0] ?? '', kind: 'days' });
     }
-    if (!aboutOpening) continue;
-
-    const covered: [number, number][] = [];
-    for (const match of sentence.matchAll(DAY_RANGE)) {
-      const from = dayIndex(match[1] ?? '');
-      const to = dayIndex(match[2] ?? '');
-      if (from === null || to === null) continue;
-      const start = match.index ?? 0;
-      covered.push([start, start + (match[0] ?? '').length]);
-      if (/\bclosed\s+(?:on\s+)?$/i.test(sentence.slice(0, start))) continue;
-      const span = daySpan(from, to);
-      const takesClosedDay = span.some((day) => !checks.openDays.has(day));
-      // Beside a time, a range must be a whole run of open days: every day in it open, and the
-      // days either side of it closed. That accepts each run of a split week ("Sunday–Tuesday …
-      // Closed Wednesday. Thursday–Friday …") and refuses one that drops an open day.
-      const wholeRun =
-        span.length === 7 ||
-        (!takesClosedDay &&
-          !checks.openDays.has((from + 6) % 7) &&
-          !checks.openDays.has((to + 1) % 7));
-      const leavesOutOpenDay = hasTime && !wholeRun;
-      if (takesClosedDay || leavesOutOpenDay) problems.push({ found: match[0] ?? '', kind: 'days' });
-    }
-    for (const match of sentence.matchAll(DAY_WORD)) {
-      const start = match.index ?? 0;
-      if (covered.some(([from, to]) => start >= from && start < to)) continue;
-      const day = dayIndex(match[0] ?? '');
-      if (day === null || checks.openDays.has(day)) continue;
-      const before = sentence.slice(0, start);
-      const after = sentence.slice(start + (match[0] ?? '').length);
-      const markedClosed =
-        /\bclosed\s+(?:on\s+)?(?:(?:every|all|most)\s+)?$/i.test(before) ||
-        /^[^,;]*\b(?:closed|off)\b/i.test(after);
-      if (!markedClosed) problems.push({ found: match[0] ?? '', kind: 'days' });
-    }
   }
+  if (![...checks.openDays].every((day) => daysWithHours.has(day))) problems.push(...partialRuns);
   return problems;
 }
 
@@ -401,7 +568,25 @@ export function to12Hour(time: string): string {
  * deploy, instead of leaving a stored answer saying the old hours.
  */
 export const HOURS_TOKEN = '{hours}';
-const HOURS_TOKEN_PATTERN = /\{\s*hours\s*\}/gi;
+
+/**
+ * A token's pattern: the word in braces, any case, spaces allowed inside the braces — and the
+ * invisible characters a paste can carry (`INVISIBLE`, the Basic Multilingual Plane's) allowed
+ * anywhere in it, so a token the validator reads (on `normalizeCopy` text) is one the page
+ * expands (on the raw text).
+ */
+function tokenPattern(word: string): RegExp {
+  const pad = `[\\s${INVISIBLE}]*`;
+  return new RegExp(`\\{${pad}${[...word].join(`[${INVISIBLE}]*`)}${pad}\\}`, 'gi');
+}
+
+const HOURS_TOKEN_PATTERN = tokenPattern('hours');
+
+/**
+ * Where a token's printed text starts, in the hours matchers' reading of a field (`scanText`): a
+ * control character no copy contains, which no day or range pattern crosses.
+ */
+const TOKEN_START = String.fromCharCode(1);
 
 /**
  * The season token, the same idea for `SEASON_NOTE`: fields marked `seasonToken: true` (the
@@ -409,7 +594,7 @@ const HOURS_TOKEN_PATTERN = /\{\s*hours\s*\}/gi;
  * preview print the note from `src/data/business.ts` in its place.
  */
 export const SEASON_TOKEN = '{season}';
-const SEASON_TOKEN_PATTERN = /\{\s*season\s*\}/gi;
+const SEASON_TOKEN_PATTERN = tokenPattern('season');
 
 const ANY_TOKEN = /\{\s*[A-Za-z_][\w ]*\}/g;
 
@@ -459,23 +644,33 @@ export function expandSeasonToken(text: string, note: string): string {
 export const WRONG_CASING =
   /\b(?!WILDFlour\b)[Ww][Ii][Ll][Dd][Ff][Ll][Oo][Uu][Rr]\b|\b[Nn][Aa][Tt][Ii][Vv][Ee][\s-]+[Ww][Ii][Ll][Dd][\s-]+[Ff][Ll][Oo][Uu][Rr]\b|\bW[Ii][Ll][Dd][\s-]+F[Ll][Oo][Uu][Rr]\b/;
 
-/** Currency amounts — symbols and units. No prices are known, so none may be printed. */
+/**
+ * Currency amounts — symbols and units, either side of the number ("$5", "$.50", "5$", "5-dollar",
+ * "USD 5"). No prices are known, so none may be printed. A number is only read from its first
+ * digit (never from inside "1,000"), which also keeps the scan linear on long runs of digits.
+ */
 export const PRICE_CURRENCY =
-  /[$€£¢]\s*\d[\d,]*(?:\.\d+)?|\b\d[\d,]*(?:\.\d+)?\s*(?:¢|USD\b|dollars?\b|bucks?\b|cents?\b)/i;
+  /[$€£¢]\s*\.?\d[\d,]*(?:\.\d+)?|\b(?<!\d,)\d+(?:,\d+)*(?:\.\d+)?\s*-?\s*(?:[$€£¢]|USD\b|dollars?\b|bucks?\b|cents?\b)|\bUSD\s*\d/i;
 
-/** Prices in words: "five dollars", "a buck", "a couple of bucks", "ten-dollar". */
+/** Prices in words: "five dollars", "a buck", "a couple of bucks", "ten-dollar", "sixty cents". */
 export const PRICE_WORDS =
-  /\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|hundred|few|couple(?:\s+of)?|half\s+a)[\s-]+(?:dollars?|bucks?|cents?)\b/i;
+  /\b(?:a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|(?:thir|four|fif|six|seven|eigh|nine)teen|(?:twen|thir|for|fif|six|seven|eigh|nine)ty|hundred|thousand|few|couple(?:\s+of)?|half\s+a)[\s-]+(?:dollars?|bucks?|cents?)\b/i;
 
 /**
- * Bare two-decimal numbers read as prices too — unless a unit says what they measure
- * ("0.25 miles", "1.50 hours", "2.50 lbs").
+ * Bare two-decimal numbers read as prices too — unless a whole unit word says what they measure
+ * ("0.25 miles", "1.50 hours", "2.50 lbs"). A unit must end at a word boundary and never be the
+ * start of a food ("pound cake", "cupcake", "footlong"); a lone letter ("M", "L") is a size, not a
+ * unit.
  */
 export const PRICE_DECIMAL =
-  /\b\d{1,3}\.\d{2}\b(?!\s*(?:%|percent|mi\b|miles?|km\b|kilomet|m\b|meters?|metres?|ft\b|feet|foot|in\b|inch|lbs?\b|pounds?|oz\b|ounces?|kg\b|g\b|grams?|hours?|hrs?\b|minutes?|mins?\b|[ap]\.?\s?m\b|acres?|cups?|lit(?:er|re)s?|l\b|gal))/i;
+  /\b\d+\.\d{2}\b(?!\s*(?:%|percent|mi\b|miles?\b|km\b|kilomet(?:er|re)s?\b|meters?\b|metres?\b|ft\b|feet\b|foot\b(?![\s-]*longs?\b)|inch(?:es)?\b|lbs?\b|pounds?\b(?![\s-]*cakes?\b)|oz\b|ounces?\b|kg\b|g\b|grams?\b|hours?\b|hrs?\b|minutes?\b|mins?\b|[ap]\.?\s?m\b|acres?\b|cups?\b(?![\s-]*cakes?\b)|lit(?:er|re)s?\b|gal(?:lons?)?\b))/i;
 
-/** Any 907-612 phone rendering; only the exact `907-612-0002` spelling is allowed. */
-export const PHONE_LIKE = /\(?907\)?\s*[.-]?\s*612\s*[.-]?\s*\d{4}/g;
+/**
+ * Any 907-612 phone rendering, taking in a digit run on either side ("907-612-00020",
+ * "5907-612-0002") so a mistyped number can never pass as the right one; only the exact
+ * `907-612-0002` spelling is allowed. The "1" of a leading "+1" is not part of the number.
+ */
+export const PHONE_LIKE = /(?:(?<!\+)\d)?\(?907\)?\s*[.-]?\s*612\s*[.-]?\s*\d+/g;
 const PHONE_ALLOWED = '907-612-0002';
 
 /** Ids render as URL anchors and React keys, so they must be kebab-case slugs. */
@@ -515,6 +710,12 @@ export function findForbidden(
 export interface ScanOptions {
   /** The field fills in `{hours}` (see `HOURS_TOKEN`); elsewhere the token would print as-is. */
   readonly hoursToken?: boolean;
+  /**
+   * What the page prints in place of `{hours}` — callers pass `HOURS_SUMMARY`, so the words around
+   * the token are judged exactly as a visitor reads them. Absent, the rules' own description of
+   * the week stands in.
+   */
+  readonly hoursSummary?: string;
   /**
    * The field fills in `{season}` (see `SEASON_TOKEN`) with this text — callers pass
    * `SEASON_NOTE`. Absent, the token would print as-is. It is also what a hand-typed copy is
@@ -587,16 +788,37 @@ export function scanText(
   // never a contradiction.
   let scanned = options.hoursToken ? normalized.replace(HOURS_TOKEN_PATTERN, ' ') : normalized;
   if (seasonNote !== undefined) scanned = scanned.replace(SEASON_TOKEN_PATTERN, ' ');
-  // For the hours claims, read each token as what it prints, so the words around it are judged in
-  // context ("Saturday: {hours}" reads as Saturday hours).
-  let asRendered =
-    options.hoursToken && rules !== null
-      ? normalized.replace(HOURS_TOKEN_PATTERN, ` ${rules.hoursDisplay} `)
-      : options.hoursToken
-        ? normalized.replace(HOURS_TOKEN_PATTERN, ' ')
-        : normalized;
+  // For the hours claims, read each token as exactly what it prints — no padding, so the sentence
+  // breaks fall where the visitor sees them — and judge the words around it in that context
+  // ("Saturday: {hours}" reads as Saturday hours).
+  // Each printed text starts after `TOKEN_START`, so a day range never runs from the owner's
+  // words into it ("Closed Saturdays - {hours}" is not "Saturdays - Sunday").
+  const hoursPrinted = options.hoursSummary ?? rules?.hoursDisplay;
+  let asRendered = options.hoursToken
+    ? normalized.replace(HOURS_TOKEN_PATTERN, () =>
+        hoursPrinted === undefined ? ' ' : `${TOKEN_START}${normalizeCopy(hoursPrinted)}`,
+      )
+    : normalized;
   if (seasonNote !== undefined) {
-    asRendered = asRendered.replace(SEASON_TOKEN_PATTERN, ` ${normalizeCopy(seasonNote)} `);
+    asRendered = asRendered.replace(SEASON_TOKEN_PATTERN, () => `${TOKEN_START}${normalizeCopy(seasonNote)}`);
+  }
+
+  // Each token prints whole sentences, full stop included, so it has to end the sentence it sits
+  // in: "Stop in {hours} on your way" would print "… Closed Saturday. on your way". A house-style
+  // steer — it blocks a publish, never a restore.
+  for (const entry of allowed) {
+    const printed = entry === HOURS ? hoursPrinted : seasonNote;
+    for (const match of normalized.matchAll(entry.pattern)) {
+      const after = normalized.slice((match.index ?? 0) + match[0].length);
+      if (/^\s*[a-z.,;:!?-]/.test(after)) {
+        issues.push({
+          path,
+          advisory: true,
+          message: `${entry.token} prints whole sentences${printed === undefined ? '' : ` ("${printed}")`}, so the words after it would run on past its full stop. Put ${entry.token} last in its sentence, with no full stop of your own after it, and start what follows as a new sentence.`,
+        });
+        break;
+      }
+    }
   }
 
   // Where the season token works, the note typed out by hand is a frozen copy that won't follow
@@ -681,6 +903,18 @@ export function scanText(
  * because the gate scans attribute values for both.
  */
 export function scanId(text: string, path: string, issues: CopyIssue[], rules: RuleChecks | null): void {
+  // A wrong number would reach the page's markup through the id (the gate's payload scan reads
+  // the digits the same way): rules-independent, like the phone check in `scanText`.
+  for (const match of text.matchAll(PHONE_LIKE)) {
+    const found = match[0] ?? '';
+    const digits = found.replace(/\D/g, '');
+    if (digits !== '9076120002' && digits !== '19076120002') {
+      issues.push({
+        path,
+        message: `This id contains "${found}", which looks like a phone number that isn't the cafe's — please pick another id.`,
+      });
+    }
+  }
   if (rules === null) return;
   for (const { word, found } of findForbidden(text, rules)) {
     issues.push({

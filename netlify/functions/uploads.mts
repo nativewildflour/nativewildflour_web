@@ -27,18 +27,29 @@
  */
 
 import { getStore } from '@netlify/blobs';
-import { IMAGE_ID, SMALL_IMAGE_PREFIX, UPLOADS_BASE } from '../../src/lib/content/images';
+import {
+  IMAGE_ID,
+  SMALL_IMAGE_PREFIX,
+  UPLOADS_BASE,
+  smallImageKey,
+} from '../../src/lib/content/images';
+import { IMAGE_STORE } from '../shared/stores';
 
 /** Must stay the literal `UPLOADS_BASE` + `/:id` and its `SMALL_IMAGE_PREFIX` twin. See above. */
 export const config = {
   path: ['/images/uploads/:id', '/images/uploads/w800/:id'],
 };
 
-const IMAGE_STORE = 'site-images';
 const ROUTE_PREFIX = `${UPLOADS_BASE}/`;
 const SMALL_ROUTE_PREFIX = `${UPLOADS_BASE}/${SMALL_IMAGE_PREFIX}/`;
 /** Ids are minted once and never reused, so the bytes behind a URL cannot change. */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+/**
+ * The CDN's copy, under the same terms — and `durable`, so one cached copy serves every edge
+ * location instead of each one calling this function the first time it is asked. A delete's
+ * purge by cache tag reaches the durable copy too.
+ */
+const CDN_IMMUTABLE = `${IMMUTABLE}, durable`;
 
 type ImageStore = ReturnType<typeof getStore>;
 
@@ -64,12 +75,13 @@ function text(status: number, message: string): Response {
  * document referencing it moments later, and the first visitor can arrive before an eventually
  * consistent read would see the bytes.
  */
-async function readImage(store: ImageStore, id: string): Promise<ArrayBuffer | null> {
+async function readImage(store: ImageStore, id: string): Promise<ReadableStream | null> {
+  // Streamed, not buffered: the first byte goes out as soon as the store sends it.
   try {
-    return await store.get(id, { type: 'arrayBuffer', consistency: 'strong' });
+    return await store.get(id, { type: 'stream', consistency: 'strong' });
   } catch (error) {
     if ((error as { name?: string })?.name !== 'BlobsConsistencyError') throw error;
-    return store.get(id, { type: 'arrayBuffer' });
+    return store.get(id, { type: 'stream' });
   }
 }
 
@@ -109,16 +121,18 @@ export default async function uploads(request: Request): Promise<Response> {
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
       'Cache-Control': IMMUTABLE,
-      // The CDN keeps its own copy under the same terms; the tag is per-id so the purge a
+      // The CDN keeps its own copy (see `CDN_IMMUTABLE`); the tag is per-id so the purge a
       // delete makes is aimed at one photo rather than the whole site, and the small copy
       // shares it so that one purge drops both.
-      'Netlify-CDN-Cache-Control': IMMUTABLE,
+      'Netlify-CDN-Cache-Control': CDN_IMMUTABLE,
       'Netlify-Cache-Tag': `upload-${id}`,
     };
     // The small copy's key, falling back to the photo itself: an upload from before the copies
     // existed (or one whose copy failed to store) still answers its `srcset` URL correctly.
-    // Caching that answer forever is right too — a photo without a copy never gains one.
-    const keys = small ? [`${SMALL_IMAGE_PREFIX}/${id}`, id] : [id];
+    // Caching that answer forever is right too — a photo without a copy never gains one (a
+    // delete that has to put a photo back restores its copy first, so this never answers in
+    // the moment between the two).
+    const keys = small ? [smallImageKey(id), id] : [id];
     if (request.method === 'HEAD') {
       // Same headers, no body. The upload records the byte count in the blob's metadata, so the
       // length the GET would send comes from a metadata read rather than the bytes themselves.
@@ -140,15 +154,15 @@ export default async function uploads(request: Request): Promise<Response> {
       });
     }
 
-    let bytes: ArrayBuffer | null = null;
+    let body: ReadableStream | null = null;
     for (const key of keys) {
-      bytes = (await readImage(store, key)) ?? null;
-      if (bytes !== null) break;
+      body = (await readImage(store, key)) ?? null;
+      if (body !== null) break;
     }
-    if (bytes === null) {
+    if (body === null) {
       return text(404, `No photo found for "${id}".`);
     }
-    return new Response(bytes, { status: 200, headers });
+    return new Response(body, { status: 200, headers });
   } catch (error) {
     // Raw exception text can leak infrastructure details; log it, answer generically.
     console.error(error);

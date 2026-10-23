@@ -11,7 +11,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 
 import { ActionButton } from '@/components/admin/buttons';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
@@ -20,6 +20,27 @@ import { StatusBanner } from '@/components/admin/StatusBanner';
 import type { DocumentEditor } from '@/components/admin/use-document-editor';
 import { formatWhen, STATUS_BANNER_ID } from '@/components/admin/use-document-editor';
 import { VersionHistory } from '@/components/admin/VersionHistory';
+
+/** Tailwind's `lg` — where the preview column stops hiding behind its toggle. */
+const WIDE_SCREEN = '(min-width: 64rem)';
+
+function subscribeToWideScreen(onChange: () => void): () => void {
+  const query = window.matchMedia(WIDE_SCREEN);
+  query.addEventListener('change', onChange);
+  return () => query.removeEventListener('change', onChange);
+}
+
+/**
+ * Whether the viewport is wide enough to show the preview column. `false` on the server and
+ * through hydration, so the preview always starts unmounted and the markup matches.
+ */
+function useWideScreen(): boolean {
+  return useSyncExternalStore(
+    subscribeToWideScreen,
+    () => window.matchMedia(WIDE_SCREEN).matches,
+    () => false,
+  );
+}
 
 export interface DocumentEditorFrameProps<T> {
   readonly editor: DocumentEditor<T>;
@@ -41,6 +62,12 @@ export function DocumentEditorFrame<T>({
   describePath,
 }: DocumentEditorFrameProps<T>) {
   const [showPreview, setShowPreview] = useState(false);
+  /**
+   * The preview is only mounted while it can be seen: beside the fields on a wide screen, or
+   * opened with the toggle on a small one. Hidden with CSS alone, a phone would still load the
+   * preview frame and post every edit into it for nothing.
+   */
+  const previewVisible = useWideScreen() || showPreview;
 
   // --- Preview toggle (small screens) ---------------------------------------
   // The pane is the last element on the page, so just unhiding it looks like nothing
@@ -66,12 +93,21 @@ export function DocumentEditorFrame<T>({
   }
 
   const { draftPrompt, confirm, issues, mode, label } = editor;
-  /** The draft started from a version that has since been replaced by another publish. */
+  /**
+   * The draft started from a version that has since been replaced by another publish. Where it
+   * started is kept through a resume (`startedFrom`), so it still reads as behind on a later visit.
+   */
+  const draftOrigin =
+    draftPrompt === null
+      ? undefined
+      : draftPrompt.startedFrom !== undefined
+        ? draftPrompt.startedFrom
+        : draftPrompt.base;
   const draftIsBehind =
     draftPrompt !== null &&
-    draftPrompt.base !== undefined &&
+    draftOrigin !== undefined &&
     editor.baseVersion !== undefined &&
-    draftPrompt.base !== editor.baseVersion;
+    draftOrigin !== editor.baseVersion;
   const draftBehindNote = draftIsBehind
     ? ` They were started before the ${label} was last published, so publishing them would replace those newer changes — look them over first.`
     : '';
@@ -168,14 +204,20 @@ export function DocumentEditorFrame<T>({
           <p className="font-semibold text-fireweed-deep">
             {`The live ${label} couldn’t be loaded: ${editor.loadError ?? 'the server reported an error.'}`}
           </p>
+          {/* Only a damaged stored document calls for a restore; after a hiccup reading a healthy
+              one, a restore would just roll the live page back. */}
           <p className="mt-1 text-sm text-bark/80">
-            {`Editing is paused for now. Restoring a saved version from Version history below can put a working ${label} back.`}
+            {editor.loadDamaged
+              ? `Editing is paused for now. Restoring a saved version from Version history below can put a working ${label} back.`
+              : `This ${label} couldn’t be loaded just now — reload the page to try again; nothing has been changed.`}
           </p>
         </div>
       ) : null}
 
-      {/* `showStatus` scrolls this into view by id — see `STATUS_BANNER_ID`. */}
-      <div id={STATUS_BANNER_ID} className="scroll-mt-28">
+      {/* `showStatus` scrolls this into view by id — see `STATUS_BANNER_ID`. It also takes focus
+          when a confirmed publish or restore disables the button that asked (the dialog's
+          `fallbackFocusId`): the outcome is reported right here. */}
+      <div id={STATUS_BANNER_ID} tabIndex={-1} className="scroll-mt-28">
         <StatusBanner className="mt-4" status={editor.status} onDismiss={editor.dismissStatus} />
       </div>
 
@@ -207,13 +249,15 @@ export function DocumentEditorFrame<T>({
             />
           </section>
 
+          {/* The pane itself always renders — the toggle's `aria-controls` names it and opening
+              focuses it — while what is in it mounts only when it shows (`previewVisible`). */}
           {preview ? (
             <div
               id="preview-pane"
               tabIndex={-1}
               className={`scroll-mt-28 ${showPreview ? 'block' : 'hidden lg:block'}`}
             >
-              {preview}
+              {previewVisible ? preview : null}
             </div>
           ) : null}
         </div>
@@ -234,6 +278,7 @@ export function DocumentEditorFrame<T>({
         tone={confirm?.tone ?? 'primary'}
         onConfirm={() => confirm?.onConfirm()}
         onCancel={editor.closeConfirm}
+        fallbackFocusId={STATUS_BANNER_ID}
       >
         {confirm?.body}
       </ConfirmDialog>

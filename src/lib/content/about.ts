@@ -155,7 +155,7 @@ export const ABOUT_SPEC: DocumentSpec = {
               kind: 'text',
               label: 'Card text',
               multiline: true,
-              hint: 'In any card, type {season} where the season note belongs — the site fills in its current wording (the same line the home and directions pages show), so the card never goes out of date.',
+              hint: 'In any card, type {season} where the season note belongs — the site fills in its current wording (the same line the home and directions pages show), so the card never goes out of date. It prints a whole sentence, so give it a sentence of its own.',
               seasonToken: true,
             },
           },

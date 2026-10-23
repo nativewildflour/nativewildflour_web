@@ -16,7 +16,13 @@
  */
 
 import type { FieldMap, GroupFieldSpec, SelectOption } from './content-schema';
-import { fieldCopyIssues, fieldStructureIssues } from './content-schema';
+import {
+  envelopeIssues,
+  fieldCopyIssues,
+  fieldStructureIssues,
+  fieldWithOptionalFilled,
+  rejectUnknownKeys,
+} from './content-schema';
 import type { ContentRules, CopyIssue, RuleChecks } from './copy-rules';
 import {
   SLUG,
@@ -233,23 +239,6 @@ function optionalString(
   }
 }
 
-/** Typos in field names must fail loudly rather than silently dropping content. */
-function rejectUnknownKeys(
-  owner: Record<string, unknown>,
-  allowed: readonly string[],
-  path: string,
-  issues: CopyIssue[],
-): void {
-  for (const key of Object.keys(owner)) {
-    if (!allowed.includes(key)) {
-      issues.push({
-        path: path === '' ? key : `${path}.${key}`,
-        message: 'unknown field — remove it',
-      });
-    }
-  }
-}
-
 /** Structural walk shared by `parseMenuContent` and `validateMenu`. */
 function collectStructuralIssues(value: unknown): CopyIssue[] {
   const issues: CopyIssue[] = [];
@@ -258,24 +247,7 @@ function collectStructuralIssues(value: unknown): CopyIssue[] {
     return issues;
   }
 
-  rejectUnknownKeys(
-    value,
-    ['version', 'updatedAt', 'intro', 'specialsNote', 'page', 'sections'],
-    '',
-    issues,
-  );
-  if (value.version !== 1) {
-    issues.push({ path: 'version', message: `expected the number 1, got ${describe(value.version)}` });
-  }
-  if (
-    value.updatedAt !== undefined &&
-    (typeof value.updatedAt !== 'string' || Number.isNaN(Date.parse(value.updatedAt)))
-  ) {
-    issues.push({
-      path: 'updatedAt',
-      message: `expected an ISO 8601 date-time string, got ${describe(value.updatedAt)}`,
-    });
-  }
+  envelopeIssues(value, ['intro', 'specialsNote', 'page', 'sections'], issues);
   requireString(value, 'intro', 'intro', issues);
   requireString(value, 'specialsNote', 'specialsNote', issues);
   // Absent is fine (an older menu); present must be whole.
@@ -358,6 +330,19 @@ function collectStructuralIssues(value: unknown): CopyIssue[] {
 }
 
 /**
+ * A structurally valid menu with its page wording's absent optional fields filled in as `''`,
+ * the way `parseWithSpec` fills the page documents. The structural walk lets an optional text
+ * field be missing (a menu saved before the field existed), but the page, its preview and the
+ * editor all read every page field as a string. Never mutates its input.
+ */
+function withPageFilled(value: unknown): MenuContent {
+  const menu = value as MenuContent;
+  if (menu.page === undefined) return menu;
+  const page = fieldWithOptionalFilled(menu.page, MENU_PAGE_FIELD) as MenuContent['page'];
+  return page === menu.page ? menu : { ...menu, page };
+}
+
+/**
  * Structural validation of untrusted JSON. Returns the typed value, or null plus every error
  * found (each prefixed with its path label).
  */
@@ -369,7 +354,7 @@ export function parseMenuContent(value: unknown): { menu: MenuContent | null; er
       errors: issues.map((issue) => (issue.path === '' ? issue.message : `${issue.path}: ${issue.message}`)),
     };
   }
-  return { menu: value as MenuContent, errors: [] };
+  return { menu: withPageFilled(value), errors: [] };
 }
 
 /**
@@ -513,6 +498,6 @@ export function validateMenu(
   if (structural.length > 0) {
     return { menu: null, issues: structural };
   }
-  const menu = value as MenuContent;
+  const menu = withPageFilled(value);
   return { menu, issues: validateMenuCopy(menu, rules) };
 }

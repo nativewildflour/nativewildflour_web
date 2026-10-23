@@ -16,12 +16,14 @@
 // any bundle that touches this module, and nothing here needs more than the key's shape.
 import type { DocumentKey } from '@/lib/content-docs';
 import type { ContentRules, CopyIssue } from '@/lib/copy-rules';
+import { SMALL_IMAGE_PREFIX, UPLOADS_BASE } from '@/lib/content/images';
 
 export type { DocumentKey };
 
 const CONTENT_ENDPOINT = '/admin/api/content';
 const RULES_ENDPOINT = '/admin/api/rules';
-const IMAGES_ENDPOINT = '/admin/api/images';
+/** The auth-gated photo endpoint — also where the editor's page previews read photos from. */
+export const IMAGES_ENDPOINT = '/admin/api/images';
 
 /**
  * A document's structural parser — the registry's `parse` (or `parseMenuContent`, adapted).
@@ -45,10 +47,12 @@ export type LoadResult<T> =
   /** The API is unreachable or answered with something that is not the document. */
   | { readonly kind: 'unavailable'; readonly detail: string }
   /**
-   * The API answered, but with a failure of its own — e.g. a corrupt stored document. Unlike
-   * `unavailable` (no functions running), the store is live and a restore can still fix it.
+   * The API answered, but with a failure of its own. `damaged`: the stored document itself is
+   * unreadable (corrupt JSON, or not the document's shape), and restoring a saved version is the
+   * way back. Otherwise the failure was the server's — a store hiccup — and a reload may be all
+   * it takes. Unlike `unavailable` (no functions running), the store is live either way.
    */
-  | { readonly kind: 'server-error'; readonly message: string };
+  | { readonly kind: 'server-error'; readonly message: string; readonly damaged: boolean };
 
 export type SaveResult =
   | { readonly kind: 'ok'; readonly updatedAt: string | null; readonly revalidated: boolean }
@@ -173,10 +177,15 @@ export async function loadDocument<T>(
 
   const body = await readJson(response);
   if (!response.ok) {
-    // A `{ ok: false, issues }` body is the function itself reporting a failure (e.g. a
-    // corrupt blob) — the store is live, so this is a server error, not "no API here".
+    // A `{ ok: false, issues }` body is the function itself reporting a failure — the store is
+    // live, so this is a server error, not "no API here". `damaged` marks the stored document as
+    // the cause (see `admin-content.mts`), as opposed to a hiccup reading it.
     if (isRecord(body) && body.ok === false) {
-      return { kind: 'server-error', message: messageFrom(body, `HTTP ${response.status}`) };
+      return {
+        kind: 'server-error',
+        message: messageFrom(body, `HTTP ${response.status}`),
+        damaged: body.damaged === true,
+      };
     }
     return { kind: 'unavailable', detail: `HTTP ${response.status}` };
   }
@@ -187,6 +196,7 @@ export async function loadDocument<T>(
     return {
       kind: 'server-error',
       message: `The stored content did not validate: ${errors.join('; ')}`,
+      damaged: true,
     };
   }
   return {
@@ -320,13 +330,31 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+/** The one rules fetch this page load shares (see `loadRules`); null until asked, or after a failure. */
+let pendingRules: Promise<ContentRules | null> | null = null;
+
 /**
  * The content rules from the auth-gated `/admin/api/rules` endpoint, or `null` when anything
  * about the fetch fails. The rules never ship in this client bundle — they arrive at runtime,
  * behind the same Basic auth as the page. With `null` the validator skips the rules-driven
  * checks and the server still enforces everything on save.
+ *
+ * The rules are fixed for a deploy, so one successful fetch serves every editor this page load
+ * opens — moving between editors by the admin's client-side links asks only once. A failure is
+ * not remembered: the next editor to open asks again.
  */
-export async function loadRules(): Promise<ContentRules | null> {
+export function loadRules(): Promise<ContentRules | null> {
+  if (pendingRules === null) {
+    const pending = fetchRules();
+    pendingRules = pending;
+    void pending.then((rules) => {
+      if (rules === null && pendingRules === pending) pendingRules = null;
+    });
+  }
+  return pendingRules;
+}
+
+async function fetchRules(): Promise<ContentRules | null> {
   try {
     const response = await fetch(RULES_ENDPOINT, { cache: 'no-store' });
     if (!response.ok) return null;
@@ -395,11 +423,27 @@ export function imagePreviewUrl(id: string): string {
   return `${IMAGES_ENDPOINT}/${encodeURIComponent(id)}`;
 }
 
-/** Every stored photo, newest first, with the documents currently using it. */
-export async function listImages(): Promise<ImagesResult> {
+/**
+ * A small picture of a stored photo, for the library cards, the picker tiles and the photo
+ * fields: its 800px copy at the public uploads URL (the full photo for one too small to have a
+ * copy), cached by the CDN and the browser — a thumbnail never needs the full upload, nor a
+ * function call through the admin endpoint.
+ */
+export function imageThumbnailUrl(id: string): string {
+  return `${UPLOADS_BASE}/${SMALL_IMAGE_PREFIX}/${encodeURIComponent(id)}`;
+}
+
+/**
+ * Every stored photo, newest first, with the documents currently using it. `history`: also which
+ * pages' saved versions still hold each one (`inHistory`) — the photo library's delete guard
+ * needs it; a photo picker does not, and leaving it off spares a read of every saved version.
+ */
+export async function listImages(options: { readonly history?: boolean } = {}): Promise<ImagesResult> {
   let response: Response;
   try {
-    response = await fetch(IMAGES_ENDPOINT, { cache: 'no-store' });
+    response = await fetch(options.history ? `${IMAGES_ENDPOINT}?history=1` : IMAGES_ENDPOINT, {
+      cache: 'no-store',
+    });
   } catch {
     return { kind: 'failed', message: 'The photo library could not be reached — try again in a moment.' };
   }

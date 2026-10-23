@@ -40,10 +40,9 @@ import aboutDefault from '../../data/defaults/about.json';
 import directionsDefault from '../../data/defaults/directions.json';
 import homeDefault from '../../data/defaults/home.json';
 import menuDefault from '../../data/defaults/menu.json';
+import { CONTENT_STORE } from '../../../netlify/shared/stores';
 import type { DocumentKey, DocumentOf } from '../content-docs';
 import { DOCUMENTS } from '../content-docs';
-
-const CONTENT_STORE = 'site-content';
 
 /** How many parse errors a thrown message quotes before it stops being readable. */
 const MAX_REPORTED_ERRORS = 5;

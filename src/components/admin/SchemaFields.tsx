@@ -25,7 +25,13 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import { ActionButton, IconButton } from '@/components/admin/buttons';
-import { stopUndoRedoPropagation, TextAreaField, TextField } from '@/components/admin/fields';
+import {
+  FieldHint,
+  hintIdFor,
+  stopUndoRedoPropagation,
+  TextAreaField,
+  TextField,
+} from '@/components/admin/fields';
 import { PhotoField } from '@/components/admin/PhotoField';
 import type { ConfirmRequest } from '@/components/admin/use-document-editor';
 import { focusSoon } from '@/components/admin/use-document-editor';
@@ -222,12 +228,17 @@ function StringListField({
       tabIndex={-1}
       role="group"
       aria-labelledby={`${path}-label`}
+      aria-describedby={field.hint ? `${path}-hint` : undefined}
       className="rounded-2xl bg-parchment/60 p-4 ring-1 ring-bark/10"
     >
       <p id={`${path}-label`} className={SUBLABEL_CLASS}>
         {field.label}
       </p>
-      {field.hint ? <p className={HINT_CLASS}>{field.hint}</p> : null}
+      {field.hint ? (
+        <p id={`${path}-hint`} className={HINT_CLASS}>
+          {field.hint}
+        </p>
+      ) : null}
 
       {entries.length === 0 ? (
         <p className="mt-2 text-sm text-bark/70">
@@ -447,12 +458,17 @@ function ListField({
       tabIndex={-1}
       role="group"
       aria-labelledby={`${path}-heading`}
+      aria-describedby={field.hint ? `${path}-hint` : undefined}
       className="rounded-2xl bg-parchment/60 p-4 ring-1 ring-bark/10"
     >
       <Heading depth={depth} id={`${path}-heading`}>
         {field.label}
       </Heading>
-      {field.hint ? <p className={HINT_CLASS}>{field.hint}</p> : null}
+      {field.hint ? (
+        <p id={`${path}-hint`} className={HINT_CLASS}>
+          {field.hint}
+        </p>
+      ) : null}
 
       {items.length === 0 ? (
         <p className="mt-2 text-sm text-bark/70">
@@ -594,29 +610,30 @@ function FieldNode({
         );
       }
       return (
-        <div>
-          <TextField
-            id={`field-${path}`}
-            label={label}
-            value={text}
-            onChange={(next) => onChange(next, path)}
-          />
-          {field.hint ? <p className={HINT_CLASS}>{field.hint}</p> : null}
-        </div>
+        <TextField
+          id={`field-${path}`}
+          label={label}
+          hint={field.hint}
+          value={text}
+          onChange={(next) => onChange(next, path)}
+        />
       );
     }
 
     case 'select': {
       const current = typeof value === 'string' ? value : '';
+      const id = `field-${path}`;
       return (
         <div>
-          <label htmlFor={`field-${path}`} className={`mb-1 ${LABEL_CLASS}`}>
+          <label htmlFor={id} className={`mb-1 ${LABEL_CLASS}`}>
             {field.label}
           </label>
+          {field.hint ? <FieldHint fieldId={id} text={field.hint} /> : null}
           <select
-            id={`field-${path}`}
+            id={id}
             value={current}
             onChange={(event) => onChange(event.target.value)}
+            aria-describedby={field.hint ? hintIdFor(id) : undefined}
             className="min-h-11 w-full cursor-pointer rounded-xl border border-bark/20 bg-snow px-3 py-2 font-semibold text-bark shadow-press transition-colors duration-150 hover:border-bark/35 focus:border-blueberry"
           >
             {field.options.map((option) => (
@@ -625,7 +642,6 @@ function FieldNode({
               </option>
             ))}
           </select>
-          {field.hint ? <p className={HINT_CLASS}>{field.hint}</p> : null}
         </div>
       );
     }
@@ -675,6 +691,7 @@ function FieldNode({
           id={`field-${path}`}
           tabIndex={-1}
           aria-labelledby={`${path}-heading`}
+          aria-describedby={field.hint ? `${path}-hint` : undefined}
           className={
             depth === 0
               ? 'rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6'
@@ -684,7 +701,11 @@ function FieldNode({
           <Heading depth={depth} id={`${path}-heading`}>
             {field.label}
           </Heading>
-          {field.hint ? <p className={HINT_CLASS}>{field.hint}</p> : null}
+          {field.hint ? (
+            <p id={`${path}-hint`} className={HINT_CLASS}>
+              {field.hint}
+            </p>
+          ) : null}
           <div className="mt-4 space-y-4">
             {Object.entries(field.fields).map(([key, child]) => (
               <FieldNode

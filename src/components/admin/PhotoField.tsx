@@ -9,14 +9,15 @@
  * space with a placeholder, and this field says so rather than looking broken.
  *
  * Uploads are shrunk in the page before they are sent (`resizeImage`), which is what makes a
- * photo straight off a phone a non-event. The preview reads from the auth-gated image
- * endpoint, so everything the editor loads stays inside the signed-in section and uncached.
+ * photo straight off a phone a non-event. The thumbnail is the photo's small copy at its public
+ * uploads URL (`imageThumbnailUrl`) — cached by the CDN and the browser, and never the full
+ * upload for a picture shown at a few hundred pixels.
  */
 
 import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 
-import { imagePreviewUrl, uploadImage } from '@/components/admin/api';
+import { imageThumbnailUrl, uploadImage } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
 import { TextField } from '@/components/admin/fields';
 import { resizeImage } from '@/components/admin/image-resize';
@@ -113,6 +114,7 @@ export function PhotoField({
       tabIndex={-1}
       role="group"
       aria-labelledby={`${path}-label`}
+      aria-describedby={hint ? `${path}-hint` : undefined}
       className="rounded-2xl bg-wheat/15 p-4 ring-1 ring-wheat"
     >
       {/* A label rather than a heading: a photo slot sits at whatever depth its section does,
@@ -120,25 +122,27 @@ export function PhotoField({
       <p id={`${path}-label`} className="text-sm font-bold tracking-wide text-bark/70 uppercase">
         {label}
       </p>
-      {hint ? <p className="mt-1 text-sm text-bark/70">{hint}</p> : null}
+      {hint ? (
+        <p id={`${path}-hint`} className="mt-1 text-sm text-bark/70">
+          {hint}
+        </p>
+      ) : null}
 
       <TextField
         id={`field-${path}.caption`}
         label="Caption"
+        hint="Printed under the picture, and read aloud to anyone using a screen reader."
         value={value.caption}
         onChange={(caption) => onChange({ ...value, caption }, `${path}.caption`)}
         placeholder="Describe the picture in a few words"
         className="mt-3"
       />
-      <p className="mt-1 text-sm text-bark/70">
-        Printed under the picture, and read aloud to anyone using a screen reader.
-      </p>
 
       <div className="mt-4 flex flex-wrap items-start gap-4">
         {image ? (
           <figure className="w-40 shrink-0">
             <Image
-              src={imagePreviewUrl(image.id)}
+              src={imageThumbnailUrl(image.id)}
               alt={value.caption}
               width={image.width}
               height={image.height}

@@ -211,7 +211,7 @@ export const DIRECTIONS_SPEC: DocumentSpec = {
               kind: 'text',
               label: 'Answer',
               multiline: true,
-              hint: 'Type {hours} where the opening hours belong and {season} where the season note belongs — the site fills in the current wording for you, so the answer never goes out of date.',
+              hint: 'Type {hours} where the opening hours belong and {season} where the season note belongs — the site fills in the current wording for you, so the answer never goes out of date. Each one prints whole sentences, so give it a sentence of its own.',
               hoursToken: true,
               seasonToken: true,
             },

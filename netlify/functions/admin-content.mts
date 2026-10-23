@@ -36,8 +36,23 @@ import homeSeed from '../../src/data/defaults/home.json';
 import aboutSeed from '../../src/data/defaults/about.json';
 import directionsSeed from '../../src/data/defaults/directions.json';
 import contentRules from '../../src/data/content-rules.json';
-import { checkBasicAuth, unauthorized } from '../shared/basic-auth';
+import { guardAdmin } from '../shared/admin-gate';
+import type { DeployContext } from '../shared/basic-auth';
 import { guardWrite } from '../shared/request-guard';
+import { failure, json } from '../shared/responses';
+import {
+  CONTENT_STORE,
+  IMAGE_STORE,
+  VERSION_STAMP,
+  VERSION_SUFFIX,
+  canonicalKey,
+  currentKey,
+  isVersionKey,
+  stampOf,
+  versionPrefix,
+} from '../shared/stores';
+import type { Landing, ReadBack } from '../shared/write-outcome';
+import { writeOutcome } from '../shared/write-outcome';
 
 /** Netlify routes requests to this function by exact path — no wildcard, no `/api/` root. */
 export const config = {
@@ -49,18 +64,7 @@ export const config = {
   ],
 };
 
-const STORE_NAME = 'site-content';
-const IMAGE_STORE = 'site-images';
 const CONTENT_ROUTE = '/admin/api/content/';
-const VERSION_SUFFIX = '.json';
-/**
- * What a snapshot key may look like after its `<doc>-versions/` prefix: the exact ISO timestamp
- * `publish` writes, optionally followed by the random suffix it has added since (older
- * snapshots have none), and nothing else. A prefix test alone would accept
- * `<doc>-versions/../menu.json` and let a restore reach for a different blob — harmless against
- * Netlify's API, where keys are opaque, but the local dev store resolves a key as a path.
- */
-const VERSION_STAMP = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)(?:-[a-z0-9]{6})?$/;
 /** Lowercase alphanumerics for the snapshot key suffix. */
 const SUFFIX_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 /** Snapshots beyond the newest 20 are pruned on save. */
@@ -82,6 +86,8 @@ const CHANGED_ELSEWHERE =
   'This page was changed somewhere else (another tab or device) after you opened it — reload to see the newest version before publishing.';
 const WRITE_FAILED =
   'The save did not go through, so nothing was published — try again in a moment.';
+const WRITE_UNCONFIRMED =
+  'The save could not be confirmed — reload the page to see whether it went through before publishing again.';
 const PHOTO_DELETED_MID_SAVE =
   'A photo on this page was deleted while you were publishing — choose another photo and publish again.';
 
@@ -117,27 +123,6 @@ type ContentStore = ReturnType<typeof getStore>;
  * by the registry validator that runs before anything reaches here.
  */
 type ContentDocument = Record<string, unknown> & { updatedAt?: string };
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-  });
-}
-
-/** Error responses share one shape with validation failures: `{ ok, issues }`. */
-function failure(status: number, message: string, path = ''): Response {
-  return json(status, { ok: false, issues: [{ path, message }] });
-}
-
-const currentKey = (doc: DocumentKey): string => `${doc}.json`;
-const versionPrefix = (doc: DocumentKey): string => `${doc}-versions/`;
-
-/** `home-versions/2026-09-02T17:00:00.000Z-a1b2c3.json` -> the part between prefix and suffix. */
-function stampOf(doc: DocumentKey, key: string): string {
-  const end = key.endsWith(VERSION_SUFFIX) ? key.length - VERSION_SUFFIX.length : key.length;
-  return key.slice(versionPrefix(doc).length, end);
-}
 
 /** When the snapshot under `key` was taken — the moment the save that replaced it landed. */
 function replacedAtOf(doc: DocumentKey, key: string): string {
@@ -178,13 +163,14 @@ function storedUpdatedAt(raw: string | null): string | null | undefined {
 }
 
 /**
- * Ask the site to re-render the public pages now that the store has changed.
+ * Ask the site to re-render the public pages that show `doc` now that the store has changed.
  *
  * The pages read the store at request time and cache the result, so a save only has to
- * invalidate that cache: `/admin/api/revalidate` calls `revalidatePath` for the four public
- * routes and the sitemap, and the next visitor gets the new copy. Failure is non-fatal — the
- * document is already saved, and each page's 60-second `revalidate` window picks the change up
- * on its own shortly after.
+ * invalidate that cache: `/admin/api/revalidate?doc=<doc>` calls `revalidatePath` for each page
+ * that renders the document (`src/data/pages.ts` — the menu shows on three of them) and for the
+ * sitemap, and the next visitor gets the new copy; the pages it does not touch keep their cached
+ * render. Failure is non-fatal — the document is already saved, and each page's 60-second
+ * `revalidate` window picks the change up on its own shortly after.
  *
  * The caller's own `Authorization` header is forwarded rather than credentials being rebuilt
  * here: the route handler re-checks Basic auth, and the request that reached this function has
@@ -198,11 +184,13 @@ function storedUpdatedAt(raw: string | null): string | null | undefined {
  * are not read here.) `npm run dev:admin` serves the functions on the same origin as the site,
  * so the same rule holds there.
  */
-async function refreshSite(request: Request): Promise<boolean> {
+async function refreshSite(request: Request, doc: DocumentKey): Promise<boolean> {
   const authorization = request.headers.get('authorization');
   if (authorization === null) return false;
   try {
-    const response = await fetch(new URL(REFRESH_ROUTE, new URL(request.url).origin), {
+    const target = new URL(REFRESH_ROUTE, new URL(request.url).origin);
+    target.searchParams.set('doc', doc);
+    const response = await fetch(target, {
       method: 'POST',
       headers: { authorization },
       // Bounded: this runs inside a synchronous function that has already done its writes, and
@@ -222,56 +210,34 @@ interface VersionListing {
 }
 
 /**
- * A key as `list()` reported it, back in the form the rest of the store speaks.
- *
- * The local blob server keeps each blob as a file, so on Windows it percent-encodes whatever a
- * Windows filename cannot hold — the colons in an ISO timestamp — and its listing reports that
- * encoded filename instead of the key that was written. Netlify's own API round-trips keys
- * untouched, where this is a no-op; without it, `netlify dev` on Windows lists versions that
- * restore and prune then cannot address. Safe for this key space: a snapshot key is an ISO
- * timestamp, a lowercase suffix and `.json`, and never holds a literal percent sign of its own.
+ * Trim snapshot history to the newest `MAX_VERSIONS`. ISO keys sort chronologically; the
+ * deletes are independent, so they go out together.
  */
-function canonicalKey(key: string): string {
-  if (!key.includes('%')) return key;
-  try {
-    return decodeURIComponent(key);
-  } catch {
-    return key;
-  }
-}
-
-/** Trim snapshot history to the newest `MAX_VERSIONS`. ISO keys sort chronologically. */
 async function pruneVersions(store: ContentStore, doc: DocumentKey): Promise<void> {
   const { blobs }: VersionListing = await store.list({ prefix: versionPrefix(doc) });
   const keys = blobs.map((blob) => canonicalKey(blob.key)).sort((a, b) => b.localeCompare(a));
-  for (const key of keys.slice(MAX_VERSIONS)) {
-    await store.delete(key);
-  }
+  await Promise.all(keys.slice(MAX_VERSIONS).map((key) => store.delete(key)));
 }
 
-/** What a conditional write reports. */
-interface WriteResult {
-  readonly modified: boolean;
-  readonly etag?: string;
-}
+/** What a text blob holds now, as a read-back reports it (`null`: nothing). */
+type StoredText = string | null;
 
 /**
- * Whether a write really landed. `@netlify/blobs` reports `{ modified: true, etag: '' }` for ANY
- * answer to a conditional write other than 412 — a 403 or a 503 included — so `modified` alone
- * proves nothing. A real write comes back with the new etag; without one, the blob is read back
- * and compared with what was sent before the write is believed.
+ * A read-back of a text blob for `writeOutcome` (`../shared/write-outcome.ts`): whether it holds
+ * exactly `expected`, under which etag, and what it holds — the snapshot clean-up in `publish`
+ * decides on that.
  */
-async function writeOutcome(
-  result: WriteResult,
-  readBack: () => Promise<boolean>,
-): Promise<'landed' | 'conflict' | 'failed'> {
-  if (!result.modified) return 'conflict';
-  if (typeof result.etag === 'string' && result.etag !== '') return 'landed';
-  try {
-    return (await readBack()) ? 'landed' : 'failed';
-  } catch {
-    return 'failed';
-  }
+function readsBack(
+  store: ContentStore,
+  key: string,
+  expected: string,
+): () => Promise<ReadBack<StoredText>> {
+  return async () => {
+    const entry = await store.getWithMetadata(key, { type: 'text' });
+    const etag = typeof entry?.etag === 'string' && entry.etag !== '' ? entry.etag : undefined;
+    const data = entry === null ? null : entry.data;
+    return { matches: data === expected, etag, data };
+  };
 }
 
 /**
@@ -327,12 +293,15 @@ async function publish(
     return failure(413, 'That page is too large to save — trim it down and try again.');
   }
 
-  const photoIssues = await missingPhotoIssues(record);
+  // The photo check and the read of the current document are independent: they go out together.
+  const [photoIssues, current] = await Promise.all([
+    missingPhotoIssues(record),
+    store.getWithMetadata(currentKey(doc), { type: 'text' }),
+  ]);
   if (photoIssues.length > 0) {
     return json(400, { ok: false, issues: photoIssues });
   }
 
-  const current = await store.getWithMetadata(currentKey(doc), { type: 'text' });
   const currentData: string | null = current === null ? null : current.data;
   const currentStamp = storedUpdatedAt(currentData);
   if (base !== undefined && currentStamp !== base) {
@@ -344,18 +313,15 @@ async function publish(
   // save's alone: a racing save in the same millisecond can never collide with it, so the
   // clean-up below can never delete the winner's snapshot.
   let snapshotKey: string | null = null;
-  let outcome: 'landed' | 'conflict' | 'failed';
-  /** The etag the write below came back with, when the store sent one (Netlify always does). */
-  let writtenEtag: string | undefined;
-  const written = (result: WriteResult): WriteResult => {
-    writtenEtag = typeof result.etag === 'string' && result.etag !== '' ? result.etag : undefined;
-    return result;
-  };
+  /** The main write's fate, and the etag it landed with (what makes the rollback conditional). */
+  let landing: Landing<StoredText>;
   if (current !== null) {
-    // A blob with nothing in it is not a version worth keeping — restoring it would only
-    // put an empty page back — so the snapshot is skipped; the conditional write below still
-    // guards against a racing save.
-    if (hasContent(currentData)) {
+    // A blob with nothing in it is not a version worth keeping — restoring it would only put an
+    // empty page back — and neither is one that is not a document at all (truncated or garbled
+    // JSON): no restore could ever bring it back, so as a "version" it would only take one of
+    // the history's places. Either way the snapshot is skipped; the conditional write below
+    // still guards against a racing save.
+    if (hasContent(currentData) && isDocumentText(currentData)) {
       const key = `${versionPrefix(doc)}${updatedAt}-${randomSuffix()}${VERSION_SUFFIX}`;
       // The snapshot's own `updatedAt` rides along as metadata, so the history can say when
       // that content was published without reading every snapshot back.
@@ -364,9 +330,10 @@ async function publish(
           onlyIfNew: true,
           metadata: { updatedAt: typeof currentStamp === 'string' ? currentStamp : '' },
         }),
-        async () => (await store.get(key, { type: 'text' })) === currentData,
+        readsBack(store, key, currentData),
       );
-      if (snapshot !== 'landed') {
+      // A snapshot that landed after all only duplicates a history entry; nothing is lost.
+      if (snapshot.outcome !== 'landed') {
         return failure(503, WRITE_FAILED);
       }
       snapshotKey = key;
@@ -381,14 +348,14 @@ async function publish(
         `[admin-content] the store returned no etag for ${currentKey(doc)} — saving without the concurrent-save guard (expected on the local blob server only).`,
       );
     }
-    outcome = await writeOutcome(
-      written(await store.setJSON(currentKey(doc), record, { onlyIfMatch: current.etag })),
-      async () => (await store.get(currentKey(doc), { type: 'text' })) === payload,
+    landing = await writeOutcome(
+      await store.setJSON(currentKey(doc), record, { onlyIfMatch: current.etag }),
+      readsBack(store, currentKey(doc), payload),
     );
   } else {
-    outcome = await writeOutcome(
-      written(await store.setJSON(currentKey(doc), record, { onlyIfNew: true })),
-      async () => (await store.get(currentKey(doc), { type: 'text' })) === payload,
+    landing = await writeOutcome(
+      await store.setJSON(currentKey(doc), record, { onlyIfNew: true }),
+      readsBack(store, currentKey(doc), payload),
     );
   }
 
@@ -402,11 +369,17 @@ async function publish(
     }
   };
 
-  if (outcome !== 'landed') {
-    await dropSnapshot();
-    return outcome === 'conflict'
+  if (landing.outcome !== 'landed') {
+    // The snapshot comes back out only when the store provably still holds the version this save
+    // started from: the write did not land and nothing replaced it, so the snapshot merely
+    // repeats the current document. Other content may be this save landing and then being
+    // replaced by a racing one (an answer lost and retried into a 412), and a failed read-back
+    // tells nothing — either way the snapshot may be the only copy left of the version replaced,
+    // and keeping one that turns out to be a duplicate costs nothing.
+    if (landing.stored !== undefined && landing.stored === currentData) await dropSnapshot();
+    return landing.outcome === 'conflict'
       ? failure(409, 'This page changed while you were saving — reload the page and try again.')
-      : failure(503, WRITE_FAILED);
+      : failure(503, landing.outcome === 'unknown' ? WRITE_UNCONFIRMED : WRITE_FAILED);
   }
 
   // The photo check above and a photo delete race: a delete can check the documents after that
@@ -417,20 +390,35 @@ async function publish(
   // save just wrote, so a newer save is never overwritten — and the snapshot of it is dropped,
   // since it is the current document again. Nothing was refreshed yet, so the pages never asked
   // for the rolled-back version (the 60-second window aside, which this revert also covers).
-  const deleted = await missingPhotoIssues(record);
+  // The save has landed by now, so a re-check that cannot run is logged rather than turned into
+  // a reported failure — the delete re-checks from its side too.
+  let deleted: CopyIssue[] = [];
+  try {
+    deleted = await missingPhotoIssues(record);
+  } catch (error) {
+    console.error(error);
+  }
   if (deleted.length > 0) {
     // A document that had nothing saved before goes back to a blank blob, which the loader and
     // this API both read as "nothing saved"; a delete could not be made conditional.
     const previous = current === null ? '' : (currentData ?? '');
-    let reverted: 'landed' | 'conflict' | 'failed';
-    try {
-      reverted = await writeOutcome(
-        await store.set(currentKey(doc), previous, { onlyIfMatch: writtenEtag }),
-        async () => (await store.get(currentKey(doc), { type: 'text' })) === previous,
-      );
-    } catch (error) {
-      console.error(error);
-      reverted = 'failed';
+    let reverted: Landing<StoredText>['outcome'];
+    if (landing.etag === undefined) {
+      // Without the etag this save wrote, the revert could not be made conditional, and an
+      // unconditional one could overwrite a newer save that has landed since.
+      reverted = 'unknown';
+    } else {
+      try {
+        reverted = (
+          await writeOutcome(
+            await store.set(currentKey(doc), previous, { onlyIfMatch: landing.etag }),
+            readsBack(store, currentKey(doc), previous),
+          )
+        ).outcome;
+      } catch (error) {
+        console.error(error);
+        reverted = 'failed';
+      }
     }
     if (reverted === 'landed') {
       await dropSnapshot();
@@ -447,22 +435,29 @@ async function publish(
 
   // Prune only for a save that landed: pruning first could drop the oldest real version to
   // make room for a snapshot that then had to be taken back. The save has landed by now, so a
-  // failed prune is logged and the save still reports success and refreshes the site.
-  if (snapshotKey !== null) {
-    try {
-      await pruneVersions(store, doc);
-    } catch (error) {
-      console.error(error);
-    }
-  }
-
-  const revalidated = await refreshSite(request);
+  // failed prune is logged and the save still reports success and refreshes the site. The prune
+  // and the refresh are independent, so they run side by side.
+  const pruned =
+    snapshotKey === null
+      ? Promise.resolve()
+      : pruneVersions(store, doc).catch((error: unknown) => console.error(error));
+  const [revalidated] = await Promise.all([refreshSite(request, doc), pruned]);
   return json(200, { ok: true, updatedAt, revalidated });
 }
 
 /** True when a blob holds something. Absent, empty and whitespace-only all mean "nothing saved". */
 function hasContent(raw: string | null): raw is string {
   return raw !== null && raw.trim() !== '';
+}
+
+/** True when stored text is a JSON object — something a restore could read back as a document. */
+function isDocumentText(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -475,22 +470,20 @@ async function getDocument(store: ContentStore, doc: DocumentKey): Promise<Respo
   if (!hasContent(raw)) {
     return json(200, { source: 'seed', document: SEEDS[doc] });
   }
+  // `damaged: true` tells the editor the stored document itself is the problem (restore a
+  // version), unlike the generic 500 below, which is the server failing to read it (reload).
+  const damaged = (message: string): Response =>
+    json(500, { ok: false, damaged: true, issues: [{ path: '', message }] });
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return failure(
-      500,
-      'The stored content is not valid JSON — publish again, or restore a version.',
-    );
+    return damaged('The stored content is not valid JSON — publish again, or restore a version.');
   }
   // Valid JSON that is not an object (`null`, a number, a list) is content the site cannot
   // render, so it gets the same answer as malformed JSON rather than a generic failure.
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return failure(
-      500,
-      'The stored content is not a page document — publish again, or restore a version.',
-    );
+    return damaged('The stored content is not a page document — publish again, or restore a version.');
   }
   const document = parsed as ContentDocument;
   return json(200, { source: 'blob', document, updatedAt: document.updatedAt });
@@ -508,7 +501,13 @@ async function putDocument(
 ): Promise<Response> {
   let body: unknown;
   try {
-    body = await request.json();
+    const text = await request.text();
+    // Refused before it is parsed or validated: the size limit is what keeps the copy checks on
+    // a field fast, so it must not wait for them to run.
+    if (text.length > MAX_RECORD_LENGTH) {
+      return failure(413, 'That page is too large to save — trim it down and try again.');
+    }
+    body = JSON.parse(text);
   } catch {
     return failure(400, 'The request body is not valid JSON.');
   }
@@ -534,7 +533,7 @@ async function getVersions(store: ContentStore, doc: DocumentKey): Promise<Respo
   const { blobs }: VersionListing = await store.list({ prefix: versionPrefix(doc) });
   const keys = blobs
     .map((blob) => canonicalKey(blob.key))
-    .filter((key) => VERSION_STAMP.test(stampOf(doc, key)))
+    .filter((key) => isVersionKey(doc, key))
     .sort((a, b) => b.localeCompare(a));
   const versions = await Promise.all(
     keys.map(async (key) => {
@@ -570,12 +569,7 @@ async function restore(
     return failure(400, 'The request body is not valid JSON.');
   }
   const key = propertyOf(body, 'key');
-  if (
-    typeof key !== 'string' ||
-    !key.startsWith(versionPrefix(doc)) ||
-    !key.endsWith(VERSION_SUFFIX) ||
-    !VERSION_STAMP.test(stampOf(doc, key))
-  ) {
+  if (typeof key !== 'string' || !isVersionKey(doc, key)) {
     return failure(400, 'Pass the key of a saved version to restore.', 'key');
   }
 
@@ -607,17 +601,15 @@ async function restore(
   return publish(store, doc, document as ContentDocument, request, undefined);
 }
 
-export default async function adminContent(request: Request): Promise<Response> {
+export default async function adminContent(
+  request: Request,
+  context?: DeployContext,
+): Promise<Response> {
   try {
-    const username = process.env.ADMIN_USERNAME ?? '';
-    const password = process.env.ADMIN_PASSWORD ?? '';
-    if (username === '' || password === '') {
-      // Same fail-closed posture as the edge guard.
-      return failure(503, 'Admin is not configured.');
-    }
-    if (!checkBasicAuth(request.headers.get('authorization'), username, password)) {
-      return unauthorized();
-    }
+    // The edge guard's checks, repeated here: an older production deploy, unset credentials,
+    // wrong credentials (see `../shared/admin-gate.ts`).
+    const refused = guardAdmin(request, context);
+    if (refused !== null) return refused;
 
     const route = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
 
@@ -639,7 +631,7 @@ export default async function adminContent(request: Request): Promise<Response> 
       // and the version listing needs it too. With the default eventual reads, publish()
       // could snapshot stale content, and a GET right after a restore could still return the
       // pre-restore document.
-      const store = getStore(STORE_NAME, { consistency: 'strong' });
+      const store = getStore(CONTENT_STORE, { consistency: 'strong' });
 
       // Every route below is awaited, not returned bare: a rejection must land in this
       // function's catch, which answers in the API's own shape.
