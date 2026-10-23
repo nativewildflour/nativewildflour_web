@@ -22,7 +22,7 @@
  */
 
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ActionButton, IconButton } from '@/components/admin/buttons';
 import { stopUndoRedoPropagation, TextAreaField, TextField } from '@/components/admin/fields';
@@ -338,6 +338,18 @@ function ListField({
   const titleField = field.titleField;
   const firstKey = titleField ?? Object.keys(field.item)[0];
 
+  /**
+   * The latest `items`/`onChange`, for a deletion confirmed later. The dialog stays open while
+   * other edits land (a photo upload finishing), and every `onChange` up the tree spreads the
+   * record it was rendered with — so a confirm must act on these, never on the props captured
+   * when Delete was tapped, or it would quietly put back the older document. Same pattern as
+   * `PhotoField`'s upload path.
+   */
+  const latest = useRef({ items, onChange });
+  useEffect(() => {
+    latest.current = { items, onChange };
+  });
+
   function replace(index: number, item: unknown, coalesceKey?: string) {
     const next = [...items];
     next[index] = item;
@@ -364,14 +376,24 @@ function ListField({
 
   function remove(index: number) {
     const title = itemTitle(items[index], field, index);
+    const target = items[index];
     const drop = () => {
-      onChange(items.filter((_, position) => position !== index));
-      focusSoon([`field-${path}[${index}]`, `field-${path}[${index - 1}]`, `field-${path}`]);
+      const current = latest.current.items;
+      // Find the item that was asked about in the document as it is now: by identity first
+      // (an edit elsewhere leaves it untouched), else at the same place if nothing moved.
+      let at = current.indexOf(target);
+      if (at === -1 && current.length === items.length) at = index;
+      if (at === -1) {
+        context.announce(`${title} changed while the question was open, so nothing was deleted.`);
+        return;
+      }
+      latest.current.onChange(current.filter((_, position) => position !== at));
+      focusSoon([`field-${path}[${at}]`, `field-${path}[${at - 1}]`, `field-${path}`]);
       context.announce(`${title} removed — Undo can bring it back.`);
     };
 
     // Nothing typed in it yet: taking it away loses no work, so it just goes.
-    if (isEmptyRecord(items[index], field.item, slugField)) {
+    if (isEmptyRecord(target, field.item, slugField)) {
       drop();
       return;
     }

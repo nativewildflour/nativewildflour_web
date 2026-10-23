@@ -48,7 +48,7 @@ export function BannockIntro({ content, imageBase }: BannockIntroProps) {
     >
       {/* The photo slot reserves the food-photography space until the owner uploads one
           (same pattern as /about/). */}
-      <div className="grid gap-10 md:grid-cols-5 md:items-center">
+      <div className="grid grid-cols-1 gap-10 md:grid-cols-5 md:items-center">
         <div className="space-y-4 text-lg text-bark/85 md:col-span-3">
           {content.paragraphs.map((paragraph, index) => (
             // The drop cap belongs to the opening paragraph only.
@@ -67,7 +67,7 @@ export function BannockIntro({ content, imageBase }: BannockIntroProps) {
         <PhotoSlot photo={content.photo} imageBase={imageBase} className="md:col-span-2" />
       </div>
 
-      <ul className="mt-12 grid gap-6 sm:grid-cols-3">
+      <ul className="mt-12 grid grid-cols-1 gap-6 sm:grid-cols-3">
         {content.features.map((feature, index) => {
           const { Icon, badge } = FEATURE_ICONS[feature.icon];
           return (

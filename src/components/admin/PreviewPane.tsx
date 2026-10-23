@@ -2,9 +2,8 @@
 
 import { MenuSection } from '@/components/MenuSection';
 import { GoodToKnow } from '@/components/menu/GoodToKnow';
-import { specialsText } from '@/components/menu/SpecialsCallout';
 import { menuPageCopy } from '@/lib/default-menu';
-import type { MenuContent } from '@/lib/menu-content';
+import { specialsText, type MenuContent } from '@/lib/menu-content';
 
 export interface PreviewPaneProps {
   readonly menu: MenuContent;

@@ -91,7 +91,7 @@ function NoteCard({
  * owner is mid-edit, and the list is never reordered in place on the public page.
  */
 export function GoodToKnow({ notes, compact = false, className = '' }: GoodToKnowProps) {
-  const columns = compact ? 'gap-4' : 'gap-5 sm:grid-cols-2';
+  const columns = compact ? 'grid-cols-1 gap-4' : 'grid-cols-1 gap-5 sm:grid-cols-2';
   return (
     <ul className={`grid ${columns} ${className}`.trim()}>
       {notes.map((note, index) => (

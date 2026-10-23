@@ -1,3 +1,4 @@
+import { BrandText } from '@/components/BrandText';
 import { FireweedSprig } from '@/components/Decor';
 import { Section } from '@/components/Section';
 import { ABOUT_CARD } from '@/components/about/card';
@@ -11,7 +12,7 @@ export interface AboutGrammyProps {
 export function AboutGrammy({ content }: AboutGrammyProps) {
   return (
     <Section tone="cream" title={content.title}>
-      <div className="grid gap-8 md:grid-cols-5 md:items-center">
+      <div className="grid grid-cols-1 gap-8 md:grid-cols-5 md:items-center">
         <div className="space-y-4 text-bark/85 md:col-span-3">
           {content.paragraphs.map((paragraph, index) => (
             <p key={index}>{paragraph}</p>
@@ -27,7 +28,7 @@ export function AboutGrammy({ content }: AboutGrammyProps) {
             </p>
           </blockquote>
           <figcaption className="mt-4 text-sm font-bold tracking-wide text-bark/70 uppercase">
-            {content.quoteAttribution}
+            <BrandText text={content.quoteAttribution} />
           </figcaption>
         </figure>
       </div>

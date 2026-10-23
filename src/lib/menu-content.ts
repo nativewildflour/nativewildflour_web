@@ -18,7 +18,15 @@
 import type { FieldMap, GroupFieldSpec, SelectOption } from './content-schema';
 import { fieldCopyIssues, fieldStructureIssues } from './content-schema';
 import type { ContentRules, CopyIssue, RuleChecks } from './copy-rules';
-import { SLUG, buildRuleChecks, describe, isBlank, isPlainObject, scanText } from './copy-rules';
+import {
+  SLUG,
+  buildRuleChecks,
+  describe,
+  isBlank,
+  isPlainObject,
+  scanId,
+  scanText,
+} from './copy-rules';
 
 // Re-exported so the admin editor and the Netlify Functions keep one import for the whole menu
 // contract — the rule types travel with the validator that consumes them.
@@ -31,7 +39,11 @@ export interface MenuItemContent {
   readonly description?: string;
 }
 
-/** One menu section. `id` doubles as the `/menu/` anchor, so it must stay a stable slug. */
+/**
+ * One menu section. `id` is a stable slug: the React key, the accent colour's seed, and the
+ * root of the card's DOM ids and `/menu/` anchor — namespaced as `menu--<id>` by
+ * `menuSectionDomId` (`src/components/MenuSection.tsx`) so no slug can collide with a fixed id.
+ */
 export interface MenuSectionContent {
   readonly id: string;
   readonly name: string;
@@ -163,6 +175,24 @@ export interface MenuContent {
   readonly page?: MenuPageCopy;
   readonly sections: readonly MenuSectionContent[];
 }
+
+/**
+ * The specials box's one paragraph: the opening line, when there is one, then the note. Lives
+ * here rather than in the component so the validator scans exactly the string the page prints —
+ * a banned word, a price or an hours claim split across the two fields is still one sentence.
+ */
+export function specialsText(lead: string, note: string): string {
+  const opening = lead.trim();
+  return opening === '' ? note : `${opening} ${note}`;
+}
+
+/**
+ * The committed default's `page.specialsLead` (`src/data/defaults/menu.json`) — what the page
+ * prints before the note for a menu saved before the page wording existed, which has no `page`
+ * block of its own. Restated because this module may not import JSON; the acceptance gate checks
+ * the two are identical, and `default-menu.ts` refuses to load if they are not.
+ */
+export const DEFAULT_SPECIALS_LEAD = 'The savory bannock special is different most days.';
 
 /**
  * Printed near the top of the menu page and anywhere the menu is summarized. Rule-driven copy
@@ -368,6 +398,28 @@ export function validateMenuCopy(menu: MenuContent, rules: ContentRules | null):
     issues.push(...fieldCopyIssues(menu.page, 'page', MENU_PAGE_FIELD, ruleChecks));
   }
 
+  // The page prints the lead and the note as one paragraph, so scan that paragraph too — with
+  // the lead the page really prints: the document's own, or, for a menu with no `page` block,
+  // the default's (`DEFAULT_SPECIALS_LEAD`, the same words `menuPageCopy` resolves to). A
+  // problem inside either field has already been reported against it (same message); what is
+  // left only exists across the join, and is reported on the note.
+  const lead = menu.page === undefined ? DEFAULT_SPECIALS_LEAD : (menu.page.specialsLead ?? '');
+  const seen = new Set(
+    issues
+      .filter((issue) => issue.path === 'specialsNote' || issue.path === 'page.specialsLead')
+      .map((issue) => issue.message),
+  );
+  const joined: CopyIssue[] = [];
+  scanText(specialsText(lead, menu.specialsNote), 'specialsNote', joined, ruleChecks);
+  for (const issue of joined) {
+    if (seen.has(issue.message)) continue;
+    seen.add(issue.message);
+    issues.push({
+      path: 'specialsNote',
+      message: `Read together with the specials box opening line: ${issue.message}`,
+    });
+  }
+
   if (menu.sections.length === 0) {
     issues.push({ path: 'sections', message: 'The menu needs at least one section.' });
   }
@@ -393,8 +445,10 @@ export function validateMenuCopy(menu: MenuContent, rules: ContentRules | null):
   menu.sections.forEach((section, index) => {
     const base = `sections[${index}]`;
 
-    // Ids render as anchor attributes on the public page, so they get the full copy scan too.
-    scanText(section.id, `${base}.id`, issues, ruleChecks);
+    // Ids render only as attributes (`menu--<id>` DOM ids and anchors), so they get the id scan:
+    // banned words and placeholder markers, not the reading rules — a section named after the
+    // cafe gets an all-lowercase id, which is fine.
+    scanId(section.id, `${base}.id`, issues, ruleChecks);
     if (seenIds.has(section.id)) {
       issues.push({
         path: `${base}.id`,

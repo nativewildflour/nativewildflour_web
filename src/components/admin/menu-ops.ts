@@ -34,9 +34,22 @@ function moveInArray<T>(list: readonly T[], from: number, to: number): readonly 
   return next;
 }
 
-/** Rebuilds an item, dropping an empty description so the stored JSON stays clean. */
-function buildItem(name: string, description: string | undefined): MenuItemContent {
-  return description === undefined || description === '' ? { name } : { name, description };
+/**
+ * Rebuilds an item, dropping an empty description so the stored JSON stays clean. Any other
+ * key the item carries (one a newer menu shape added) is kept as it was — an edit here must
+ * never strip a field this editor does not know about.
+ */
+function buildItem(
+  item: MenuItemContent,
+  name: string,
+  description: string | undefined,
+): MenuItemContent {
+  const { name: _name, description: _description, ...extra } = item;
+  void _name;
+  void _description;
+  return description === undefined || description === ''
+    ? { ...extra, name }
+    : { ...extra, name, description };
 }
 
 interface SectionShape {
@@ -46,11 +59,14 @@ interface SectionShape {
   readonly items: readonly MenuItemContent[];
   readonly toppings: readonly string[] | undefined;
   readonly highlight: boolean | undefined;
+  /** Keys this editor does not manage, carried through untouched. */
+  readonly extra: Readonly<Record<string, unknown>>;
 }
 
 /** Rebuilds a section, omitting every optional key that is unset — same shape as the seed. */
 function buildSection(shape: SectionShape): MenuSectionContent {
   return {
+    ...shape.extra,
     id: shape.id,
     name: shape.name,
     ...(shape.description !== undefined && shape.description !== ''
@@ -63,14 +79,8 @@ function buildSection(shape: SectionShape): MenuSectionContent {
 }
 
 function toShape(section: MenuSectionContent): SectionShape {
-  return {
-    id: section.id,
-    name: section.name,
-    description: section.description,
-    items: section.items,
-    toppings: section.toppings,
-    highlight: section.highlight,
-  };
+  const { id, name, description, items, toppings, highlight, ...extra } = section;
+  return { id, name, description, items, toppings, highlight, extra };
 }
 
 function withSection(
@@ -85,13 +95,53 @@ function withSection(
   return { ...menu, sections };
 }
 
-/** A slug not used by any existing section: `baked-goods`, then `baked-goods-2`, … */
+/**
+ * Fixed element ids on the menu page, its admin screen and the chrome around both. The page
+ * namespaces each section's DOM ids (`menuSectionDomId`), but a section id is permanent, so a
+ * new one also stays clear of these in its bare form — whatever renders it later.
+ */
+const RESERVED_SECTION_IDS: ReadonlySet<string> = new Set([
+  'main',
+  'menu',
+  'menu-jsonld',
+  'site-nav-panel',
+  'todays-special-heading',
+  'menu-copy-heading',
+  'specials-heading',
+  'sections-heading',
+  'preview-heading',
+  'preview-pane',
+  'review-heading',
+  'issues',
+  'editor-status',
+]);
+
+/** Suffixes the menu derives from a section id for its heading and chip-list elements. */
+const DERIVED_SUFFIXES = ['heading', 'chips'] as const;
+
+/** Would `candidate`, or an id derived from it, coincide with a taken id or one derived from it? */
+function collides(candidate: string, taken: ReadonlySet<string>): boolean {
+  if (RESERVED_SECTION_IDS.has(candidate) || taken.has(candidate)) return true;
+  for (const suffix of DERIVED_SUFFIXES) {
+    if (RESERVED_SECTION_IDS.has(`${candidate}-${suffix}`)) return true;
+    if (taken.has(`${candidate}-${suffix}`)) return true;
+    if (candidate.endsWith(`-${suffix}`) && taken.has(candidate.slice(0, -suffix.length - 1))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A slug no existing section uses and no fixed or derived page id can collide with:
+ * `baked-goods`, then `baked-goods-2`, …
+ */
 function uniqueSectionId(name: string, existing: readonly MenuSectionContent[]): string {
   const taken = new Set(existing.map((section) => section.id));
   const base = slugify(name);
-  if (!taken.has(base)) return base;
+  if (!collides(base, taken)) return base;
   let suffix = 2;
-  while (taken.has(`${base}-${suffix}`)) suffix += 1;
+  while (collides(`${base}-${suffix}`, taken)) suffix += 1;
   return `${base}-${suffix}`;
 }
 
@@ -170,7 +220,11 @@ export function updateItem(
     const item = shape.items[itemIndex];
     if (!item) return shape;
     const items = [...shape.items];
-    items[itemIndex] = buildItem(patch.name ?? item.name, patch.description ?? item.description);
+    items[itemIndex] = buildItem(
+      item,
+      patch.name ?? item.name,
+      patch.description ?? item.description,
+    );
     return { ...shape, items };
   });
 }

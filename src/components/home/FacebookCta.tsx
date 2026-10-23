@@ -13,7 +13,7 @@ export function FacebookCta({ content }: FacebookCtaProps) {
   return (
     <Section width="6xl">
       <div className="flex flex-col gap-6 rounded-[2rem] bg-gradient-to-br from-blueberry to-blueberry-deep p-8 text-snow shadow-lift sm:flex-row sm:items-center sm:justify-between sm:p-10">
-        <div className="flex items-start gap-4">
+        <div className="flex min-w-0 items-start gap-4">
           <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-snow/15 text-sky">
             <ChatIcon className="h-6 w-6" />
           </span>

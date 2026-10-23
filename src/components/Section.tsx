@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { BrandText } from '@/components/BrandText';
 import { Container } from '@/components/Container';
 import { TitleStroke } from '@/components/Decor';
 
@@ -50,7 +51,7 @@ export function Section({
       <Container width={width}>
         {eyebrow ? (
           <p className="mb-3 text-sm font-bold tracking-[0.18em] text-wood uppercase">
-            {eyebrow}
+            <BrandText text={eyebrow} />
           </p>
         ) : null}
         {title ? (

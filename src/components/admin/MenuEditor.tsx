@@ -271,6 +271,14 @@ export function MenuEditor() {
   function addNewSection() {
     const name = newSectionName.trim();
     if (name === '') return;
+    // Without the rules the probe below can't see banned words, and the id a section gets
+    // here is permanent — so no section is added until they load.
+    if (rules === null) {
+      setNewSectionError(
+        'The content rules haven’t loaded, so a new section can’t be checked yet. Reload the page and try again.',
+      );
+      return;
+    }
     // A name that breaks the copy rules would mint a permanently rule-breaking anchor id
     // (renames never touch ids), leaving a blocked publish nothing can fix — so the
     // candidate runs through the validator in a minimal probe menu before it exists.
@@ -302,123 +310,127 @@ export function MenuEditor() {
       describePath={(path) => describeMenuPath(menu, path)}
       preview={<PreviewPane menu={menu} />}
     >
-      <section
-        aria-labelledby="menu-copy-heading"
-        className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
-      >
-        <h2 id="menu-copy-heading" className="text-xl font-black text-bark">
-          Top of the page
-        </h2>
-        <div className="mt-4 space-y-4">
-          <PageTextField {...pageText('eyebrow')} />
-          <TextAreaField
-            id="field-intro"
-            label="Menu intro"
-            hint="The welcome under the Menu heading — a sentence or two."
-            value={menu.intro}
-            onChange={(value) => applyEdit(ops.setIntro(menu, value), 'intro')}
-          />
-          <div className="rounded-xl bg-parchment p-3 ring-1 ring-bark/10">
-            <p className="text-xs font-bold tracking-[0.14em] text-wood uppercase">
-              Always printed
-            </p>
-            <p className="mt-1 text-sm text-bark/80">
-              “{MENU_PRICE_NOTE}” — this line is part of the site and isn’t editable, so
-              prices never need to appear in the menu text.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section
-        aria-labelledby="specials-heading"
-        className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
-      >
-        <h2 id="specials-heading" className="text-xl font-black text-bark">
-          Today’s special box
-        </h2>
-        <p className="mt-1 text-sm text-bark/70">
-          The dashed box above the menu. The Facebook button under the words is added for you.
-        </p>
-        <div className="mt-4 space-y-4">
-          <PageTextField {...pageText('specialsTitle')} />
-          <PageTextField {...pageText('specialsLead')} />
-          <TextAreaField
-            id="field-specialsNote"
-            label="Specials note"
-            hint="Follows the opening line — point people to where today’s special is posted."
-            rows={2}
-            value={menu.specialsNote}
-            onChange={(value) => applyEdit(ops.setSpecialsNote(menu, value), 'specialsNote')}
-          />
-        </div>
-      </section>
-
-      <section aria-labelledby="sections-heading">
-        <h2 id="sections-heading" className="text-xl font-black text-bark">
-          Sections
-        </h2>
-        <div className="mt-4 rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6">
-          <PageTextField {...pageText('sectionsTitle')} />
-        </div>
-        <div className="mt-5 space-y-5">
-          {/* Keyed by id (unique via `uniqueSectionId`): per-section local state — like an
-              unsent "New topping" — follows the section, not the position. */}
-          {menu.sections.map((section, index) => (
-            <SectionEditor
-              key={section.id}
-              sectionIndex={index}
-              sectionCount={menu.sections.length}
-              section={section}
-              sectionOptions={sectionOptions}
-              actions={sectionActions(index)}
-            />
-          ))}
-        </div>
-
-        <form
-          className="mt-5 flex flex-wrap items-end gap-2 rounded-3xl border-2 border-dashed border-bark/20 p-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            addNewSection();
-          }}
+      {/* Read-only (offline, signed out, or a store error) is one disabled fieldset, as in
+          `SchemaFields`: the editor then holds the built-in menu, not the live one, so no
+          control may edit it into something that looks like the owner's work. */}
+      <fieldset disabled={editor.readOnly} className="min-w-0 space-y-6">
+        <legend className="sr-only">The menu</legend>
+        <section
+          aria-labelledby="menu-copy-heading"
+          className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
         >
-          <TextField
-            id="field-sections"
-            label="New section name"
-            value={newSectionName}
-            onChange={(value) => {
-              setNewSectionName(value);
-              setNewSectionError(null);
-            }}
-            onKeyDown={stopUndoRedoPropagation}
-            placeholder="e.g. Seasonal Treats"
-            className="min-w-56 flex-1"
-          />
-          <ActionButton variant="secondary" onClick={addNewSection}>
-            Add section
-          </ActionButton>
-          {newSectionError ? (
-            <p className="basis-full text-sm font-semibold text-fireweed-deep">
-              {newSectionError}
-            </p>
-          ) : null}
-        </form>
-      </section>
+          <h2 id="menu-copy-heading" className="text-xl font-black text-bark">
+            Top of the page
+          </h2>
+          <div className="mt-4 space-y-4">
+            <PageTextField {...pageText('eyebrow')} />
+            <TextAreaField
+              id="field-intro"
+              label="Menu intro"
+              hint="The welcome under the Menu heading — a sentence or two."
+              value={menu.intro}
+              onChange={(value) => applyEdit(ops.setIntro(menu, value), 'intro')}
+            />
+            <div className="rounded-xl bg-parchment p-3 ring-1 ring-bark/10">
+              <p className="text-xs font-bold tracking-[0.14em] text-wood uppercase">
+                Always printed
+              </p>
+              <p className="mt-1 text-sm text-bark/80">
+                “{MENU_PRICE_NOTE}” — this line is part of the site and isn’t editable, so
+                prices never need to appear in the menu text.
+              </p>
+            </div>
+          </div>
+        </section>
 
-      {/* Stays editable when publishing is off, like every other field on this screen —
-          nothing in the notes needs the server. */}
-      <SchemaFields
-        spec={GOOD_TO_KNOW_SPEC}
-        document={page}
-        basePath="page"
-        legend="Good to know notes"
-        onChange={(next, coalesceKey) => applyEdit(ops.setPage(menu, next), coalesceKey)}
-        readOnly={false}
-        announce={announce}
-        requestConfirm={requestConfirm}
-        closeConfirm={closeConfirm}
-      />
+        <section
+          aria-labelledby="specials-heading"
+          className="rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6"
+        >
+          <h2 id="specials-heading" className="text-xl font-black text-bark">
+            Today’s special box
+          </h2>
+          <p className="mt-1 text-sm text-bark/70">
+            The dashed box above the menu. The Facebook button under the words is added for you.
+          </p>
+          <div className="mt-4 space-y-4">
+            <PageTextField {...pageText('specialsTitle')} />
+            <PageTextField {...pageText('specialsLead')} />
+            <TextAreaField
+              id="field-specialsNote"
+              label="Specials note"
+              hint="Follows the opening line — point people to where today’s special is posted."
+              rows={2}
+              value={menu.specialsNote}
+              onChange={(value) => applyEdit(ops.setSpecialsNote(menu, value), 'specialsNote')}
+            />
+          </div>
+        </section>
+
+        <section aria-labelledby="sections-heading">
+          <h2 id="sections-heading" className="text-xl font-black text-bark">
+            Sections
+          </h2>
+          <div className="mt-4 rounded-3xl bg-snow p-5 shadow-card ring-1 ring-bark/10 sm:p-6">
+            <PageTextField {...pageText('sectionsTitle')} />
+          </div>
+          <div className="mt-5 space-y-5">
+            {/* Keyed by id (unique via `uniqueSectionId`): per-section local state — like an
+                unsent "New topping" — follows the section, not the position. */}
+            {menu.sections.map((section, index) => (
+              <SectionEditor
+                key={section.id}
+                sectionIndex={index}
+                sectionCount={menu.sections.length}
+                section={section}
+                sectionOptions={sectionOptions}
+                actions={sectionActions(index)}
+              />
+            ))}
+          </div>
+
+          <form
+            className="mt-5 flex flex-wrap items-end gap-2 rounded-3xl border-2 border-dashed border-bark/20 p-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              addNewSection();
+            }}
+          >
+            <TextField
+              id="field-sections"
+              label="New section name"
+              value={newSectionName}
+              onChange={(value) => {
+                setNewSectionName(value);
+                setNewSectionError(null);
+              }}
+              onKeyDown={stopUndoRedoPropagation}
+              placeholder="e.g. Seasonal Treats"
+              className="min-w-56 flex-1"
+            />
+            <ActionButton variant="secondary" onClick={addNewSection}>
+              Add section
+            </ActionButton>
+            {newSectionError ? (
+              <p className="basis-full text-sm font-semibold text-fireweed-deep">
+                {newSectionError}
+              </p>
+            ) : null}
+          </form>
+        </section>
+
+        <SchemaFields
+          spec={GOOD_TO_KNOW_SPEC}
+          document={page}
+          basePath="page"
+          legend="Good to know notes"
+          onChange={(next, coalesceKey) => applyEdit(ops.setPage(menu, next), coalesceKey)}
+          readOnly={editor.readOnly}
+          announce={announce}
+          requestConfirm={requestConfirm}
+          closeConfirm={closeConfirm}
+        />
+      </fieldset>
     </DocumentEditorFrame>
   );
 }

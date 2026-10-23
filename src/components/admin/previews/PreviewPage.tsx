@@ -5,12 +5,17 @@
  * editor last posted. Until one arrives it shows the committed default, so the route also
  * stands on its own.
  *
+ * The home and about pages also show parts of the menu, so the frame loads the published menu
+ * once (falling back to the built-in one when it can't).
+ *
  * Only same-origin messages are honored, and every draft is run through the document's
  * structural parser before it renders — a message is untrusted input like any other.
  */
 
 import { useEffect, useState } from 'react';
 
+import { loadDocument } from '@/components/admin/api';
+import type { DocumentParser } from '@/components/admin/api';
 import { AboutPreview } from '@/components/admin/previews/AboutPreview';
 import { DirectionsPreview } from '@/components/admin/previews/DirectionsPreview';
 import { HomePreview } from '@/components/admin/previews/HomePreview';
@@ -23,6 +28,14 @@ import { DOCUMENTS } from '@/lib/content-docs';
 import type { AboutContent } from '@/lib/content/about';
 import type { DirectionsContent } from '@/lib/content/directions';
 import type { HomeContent } from '@/lib/content/home';
+import { DEFAULT_MENU } from '@/lib/default-menu';
+import type { MenuContent } from '@/lib/menu-content';
+import { parseMenuContent } from '@/lib/menu-content';
+
+const parseMenu: DocumentParser<MenuContent> = (value) => {
+  const { menu, errors } = parseMenuContent(value);
+  return { document: menu, errors };
+};
 
 const SEEDS: Record<PreviewDocumentKey, unknown> = {
   home: homeSeed,
@@ -42,6 +55,19 @@ export interface PreviewPageProps {
 export function PreviewPage({ doc }: PreviewPageProps) {
   // The default ships in this repo and its editor parses it on load, so it is trusted here.
   const [document, setDocument] = useState<unknown>(SEEDS[doc]);
+  const [menu, setMenu] = useState<MenuContent>(DEFAULT_MENU);
+
+  // The directions page shows nothing from the menu, so only home and about ask for it.
+  useEffect(() => {
+    if (doc === 'directions') return;
+    let cancelled = false;
+    void loadDocument('menu', parseMenu).then((result) => {
+      if (!cancelled && result.kind === 'ok') setMenu(result.document);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [doc]);
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -70,9 +96,9 @@ export function PreviewPage({ doc }: PreviewPageProps) {
 
   switch (doc) {
     case 'home':
-      return <HomePreview content={document as HomeContent} />;
+      return <HomePreview content={document as HomeContent} menu={menu} />;
     case 'about':
-      return <AboutPreview content={document as AboutContent} />;
+      return <AboutPreview content={document as AboutContent} menu={menu} />;
     case 'directions':
       return <DirectionsPreview content={document as DirectionsContent} />;
   }

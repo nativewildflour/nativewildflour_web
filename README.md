@@ -93,29 +93,41 @@ Graph and Twitter tags; that all JSON-LD parses and the business listing carries
 number and opening hours; that the sitemap lists exactly the four public pages and the admin pages
 stay out of it (noindex, no canonical); that the public pages' robots tags and `robots.txt` match
 the [indexing switch](#search-engine-indexing-off-until-launch); that every route the app exports
-is registered with the checker; and that no banned wording, malformed phone number or unresolved
-template placeholder
-reached the output or the JavaScript bundles. Because the build has no blob store, what it checks
-is the default content; the owner's content is checked by the same rules at publish time. The
-banned-wording list itself lives in `src/data/content-rules.json`, which also feeds the admin
-editors' validator, so the checker and the editors can never disagree. It prints a PASS/FAIL table
-and exits non-zero if anything fails.
+and every concrete page URL is registered with the checker; that every page response carries the
+security headers; that every opening-hours statement on a page (ranges in any spelling, day
+ranges, "open daily" claims, the hours table row by row) agrees with the real hours; and that no
+banned wording, malformed phone number, unexpanded `{hours}` or `{season}`, or unresolved template placeholder
+reached the visible text, the attributes, the structured data, the inline page payload or the
+JavaScript bundles. It also scans every source file under `src/` and `netlify/`, and this README,
+for banned wording. Because the build has no blob store, what it checks is the default content;
+the owner's content is checked by the same rules at publish time. The rules themselves live in
+`src/data/content-rules.json`, and the checker runs the very module the editors' validator runs
+(`src/lib/copy-rules.ts`), so the two can never disagree. It prints a PASS/FAIL table and exits
+non-zero if anything fails.
 
 ---
 
 ## Deploying to Netlify
 
-Either path works. `netlify.toml` already supplies the build command, the publish directory
-(`.next`), the Next runtime plugin, Node 22, security headers, cache headers, and the routing for
-the [admin section](#admin-editors)'s edge function — so no settings need to be typed into the
-Netlify UI beyond the admin environment variables.
+Either path works. `netlify.toml` already supplies the build command
+(`npm run build && npm run verify`), the publish directory (`.next`), the Next runtime plugin,
+Node 22, cache headers for static files, and the routing for the [admin section](#admin-editors)'s
+edge function — so no settings need to be typed into the Netlify UI beyond the admin environment
+variables.
+
+Security headers come from three places, because Netlify applies `netlify.toml`'s `[[headers]]`
+only to files served from its static store: `next.config.ts` (`headers()`) sets them on every
+page the Next runtime renders — the public pages, the 404 and the admin screens, plus `no-store`
+on `/admin`; `netlify.toml` sets the same values on static files; and the Netlify Functions and
+the edge guard set their own headers on what they answer. `npm run verify` checks every page
+response for them.
 
 ### Option A — connect the Git repository (recommended)
 
 1. Push this repository to GitHub, GitLab or Bitbucket.
 2. In Netlify: **Add new site → Import an existing project**, pick the repository, and authorize it.
 3. Netlify reads `netlify.toml` and pre-fills the build command and publish directory. Confirm they
-   read `npm run build` and `out`, then deploy.
+   read `npm run build && npm run verify` and `.next`, then deploy.
 4. Every push to the production branch redeploys. Pull requests get their own preview URL.
 
 ### Option B — deploy from your machine
@@ -222,7 +234,8 @@ page rather than its last good render.
 ### Hours
 
 `OPENING_HOURS` is an array shaped for schema.org's `openingHoursSpecification`. Change it once and
-the hours table, the header strip, the footer, the FAQ and the JSON-LD all follow:
+the hours table, the header strip, the footer, the hours card and the JSON-LD all follow, and so
+does every FAQ answer written with the `{hours}` token:
 
 ```ts
 export const OPENING_HOURS: readonly OpeningHoursSpec[] = [
@@ -237,9 +250,31 @@ export const OPENING_HOURS: readonly OpeningHoursSpec[] = [
 Days left out of every entry are rendered as **Closed**. `HOURS_ROWS` (the table) and the two
 display strings — `HOURS_SUMMARY` ("Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday.") and
 `HOURS_SHORT` ("Open Sun–Fri 9 AM–4 PM · Closed Sat") — are all derived from it. `SEASON_NOTE`
-holds the seasonality wording. The expected hours also live in `src/data/content-rules.json`
-(`expectedHours`), which the verify gate and the editors' validator read: change both together, or
-the gate will refuse a deploy whose FAQ answer quotes the old hours.
+holds the seasonality wording. The about page's season card doesn't repeat it: its text is the
+`{season}` token, which the page and the editor preview fill in from `SEASON_NOTE`, so a change to
+the note reaches every page with the next deploy. The gate fails if the default card stops using
+the token or `/about/` stops printing the note.
+
+The expected hours also live in `src/data/content-rules.json` (`expectedHours.opens`, `closes`
+and `days`), which the verify gate and the editors' validator read. Change both together — the
+gate compares them and fails the deploy if they disagree.
+
+The owner's own words are the one place hours could go stale, so the editors steer them to a
+token: in the directions FAQ answers, `{hours}` is replaced with `HOURS_SUMMARY` wherever the
+answer renders (the page, its FAQ structured data and the editor preview). The default "What are
+your hours?" answer uses it, and a publish is refused while an answer types the hours out by hand
+(restoring an older version that does so still works — the snapshot cannot be edited first), so
+with the token in place an hours change needs no content edit at all. Anywhere else, hours the
+owner writes are checked against the rules — time ranges in any common spelling ("9 a.m. – 4
+p.m.", "9:00 AM until 4 PM"), opening and closing times, day ranges and closed days named as open,
+"open daily" — and `{hours}` itself is refused outside the FAQ answers, where nothing would fill
+it in. Stored content published before a change is not rewritten: after changing the hours, open
+each editor once; anything that now contradicts them is listed there, and the live page keeps
+showing the stored words until the owner publishes the fix.
+
+The season note works the same way: `{season}` is filled in only in the about page's "Made in
+Skagway" card text and refused anywhere else, and a card that types the note out word for word is
+steered to the token (it blocks a publish, not a restore).
 
 ### Phone
 
@@ -260,8 +295,11 @@ The menu is content, not code. The owner edits it in the [admin editor](#admin-e
 read from the blob store at request time; the menu page, the home-page highlights, the about page's
 topping chips and the `Menu` JSON-LD all render from that one document. The committed default in
 `src/data/defaults/menu.json` only matters until the first publish. Each section needs a stable
-`id` (it becomes the anchor used by the jump links on `/menu/`), a `name`, an optional one-line
-`description`, and `items` of `{ name, description }`.
+`id` (a lowercase slug; it becomes the anchor `#menu--<id>` used by the jump links on `/menu/` —
+the `menu--` prefix keeps an owner's slug from ever landing on one of the page's own ids), a
+`name`, an optional one-line `description`, and `items` of `{ name, description }`. Dock cards on
+`/directions/` follow the same rule: a dock's link id `broadway-dock` is the anchor
+`#dock--broadway-dock`.
 
 **Prices are deliberately absent.** Nothing on the site prints a price; the copy says prices are
 posted at the counter, and that price line is fixed wording the editor cannot change. If prices
@@ -292,7 +330,7 @@ What each editor covers, and what stays fixed:
 |---|---|---|
 | Home page | Headline and highlighted word, opening paragraph, the bannock explainer and its photo, the three feature cards, the menu-highlights heading, the visit-us notes, the customer quote, the Meet Kelly teaser, the Facebook panel | Motto, hours pill, address, phone, map links, the menu cards themselves |
 | Menu | The line above the Menu heading, intro, the specials box heading and wording, the heading over the sections, sections, items, descriptions, topping chips, which sections the home page highlights, the "Good to know" heading and notes | The "Menu" page heading, the Facebook button, the "prices are posted at the counter" line and the "Prices at the counter" card |
-| About page | Every section's heading and paragraphs, Kelly's photo, Grammy's quote, the three "Made in Skagway" cards, the come-say-hello notes | Toppings list (from the menu), motto banner, address, phone, Facebook link, hours table |
+| About page | Every section's heading and paragraphs, Kelly's photo, Grammy's quote, the three "Made in Skagway" cards (a card's text can be `{season}`, filled in with the season note), the come-say-hello notes | Toppings list (from the menu), motto banner, address, phone, Facebook link, hours table, the season note itself |
 | Directions page | Headline and intro, orientation notes and the storefront photo, the dock-by-dock walks, the shuttle card, arrival notes, tips, the FAQ | Address block, phone, hours, season note, the map and its links |
 
 ### How publishing works
@@ -330,22 +368,35 @@ live and makes the same refresh call, so the first visitor already sees the owne
 
 Photos are uploaded from the photo field inside an editor, or from the library at
 `/admin/photos/`. The browser downscales the picture first (longest edge 1600 px, re-encoded as a
-JPEG around 85% quality), so uploads are small and pages never ship a phone-sized original. The
+JPEG around 85% quality), so uploads are small and pages never ship a phone-sized original. A
+photo wider than 800 px also gets an 800 px copy, sent in the same upload and stored beside it
+(`w800/<id>`); the public pages offer both in `srcset`, so a phone downloads the smaller one. The
 file is stored in a second blob store (`site-images`), and the document keeps only its id and
-pixel size — which is what lets the exported page reserve the right space before the picture
+pixel size — which is what lets the page reserve the right space before the picture
 loads. Pick an existing photo from the library to reuse it on another page. A photo cannot be
-deleted while any published document still uses it; remove it from the page and publish first.
+deleted while any published document still uses it, or while a saved version in any page's
+history does (a restore would otherwise put a missing photo back on the site) — the library marks
+both cases and keeps Delete off, so remove it from the page and publish first, and wait for those
+versions to age out of the history. A delete and a publish that race each other re-check after
+their own write and back off (the photo is put back, or the publish is rolled back), so a live
+page never points at a missing photo. A deleted photo and its copy are also purged from Netlify's
+CDN by their shared cache tag (via `purgeCache` from `@netlify/functions`; skipped locally, where
+no purge token is set), so their URLs stop answering at once.
 
-Photos are served under `/images/uploads/` by a small public function that streams them from the
-blob store with year-long cache headers — every upload has a new id, so a cached copy can never go
-stale. The editor preview reads the same pictures through the sign-in-protected
-`/admin/api/images/` endpoint.
+Photos are served under `/images/uploads/` (and the copies under `/images/uploads/w800/`, which
+falls back to the full photo for uploads made before the copies existed) by a small public
+function that streams them from the blob store with year-long cache headers — every upload has a
+new id, so a cached copy can never go stale. The editor preview reads the full-size pictures
+through the sign-in-protected `/admin/api/images/` endpoint.
 
 ### Version history
 
 Every publish snapshots the document it replaces (the newest 20 snapshots per document are kept).
-Each editor's history panel lists them with dates and can restore any one — a restore runs the
-same validate–snapshot–write–rebuild pipeline, so it is simply a publish of an older version.
+Each editor's history panel lists them labelled with the time each version was itself published
+(read from the snapshot), and can restore any one — a restore runs the same
+validate–snapshot–write–refresh pipeline, so it is simply a publish of an older version, live on
+the next page load with no build. A snapshot that can no longer be read is refused with "That saved
+version is damaged and can't be restored" (HTTP 422); pick another version.
 
 ### Setup
 
@@ -365,10 +416,11 @@ Two notes on operating it:
   previews and branch deploys then have no working sign-in, so a preview of an unreviewed branch
   can never become a way to write to the live content. (They share the blob store, so a preview
   still *reads* the owner's published content.)
-- **Two saves can collide.** If a document changed between loading the editor and clicking
-  Publish — another tab, another person, a restore — the save is refused (HTTP 409) with a
-  message saying so, rather than silently overwriting the newer version. Reload the page to pick
-  up the latest version, then make the change again.
+- **Two saves can collide.** Every publish carries the publish time of the version the editor
+  loaded. If the document changed since — another tab, another device, a restore — the save is
+  refused (HTTP 409) with a message saying so, rather than silently overwriting the newer version;
+  the same answer covers two saves racing on the server. Reload the page to pick up the latest
+  version (unpublished edits stay in the browser's draft), then make the change again.
 
 ### Local development
 
@@ -409,7 +461,7 @@ To add a slot to a page, add a `photo` field to that page's declaration in `src/
 seed it in the JSON with `{ "caption": "…", "image": null }`, and render it with `PhotoSlot` —
 the editor grows the matching upload control on its own. For a picture that belongs in the code
 rather than the content (a committed file under `public/images/`), the older form still works and
-needs the file's true pixel size, because the export is unoptimized:
+needs the file's true pixel size, because images are served unoptimized (`images.unoptimized`):
 
 ```tsx
 <PhotoSlot caption="…" src="/images/example.jpg" width={1200} height={900} />
@@ -422,7 +474,9 @@ Good candidates for more slots, in priority order:
   document has no photo fields yet; adding them means extending the menu editor's section cards).
 - **About page** — the storefront, to go with Kelly's portrait.
 
-Use `priority` only on a photo above the fold.
+Every slot lazy-loads, which is right while no photo sits above the fold. If one ever does (a home
+hero shot), give `PhotoSlot` a pass-through for next/image's `preload` prop and set it on that
+slot only — `priority` is deprecated as of Next 16.
 
 ### Generated images
 
@@ -492,8 +546,8 @@ either omitted or uses the value the owner maintains directly.
    whenever they change.
 6. **Online ordering.** The site has no ordering, payment or pickup-scheduling feature — it is
    informational, and it says to order at the window. Please confirm whether you want online
-   ordering added. It would be a significant change: the site is currently a set of static files
-   with no server, so ordering would mean adding a payment provider or an ordering platform,
+   ordering added. It would be a significant change: the site is informational, with no checkout,
+   so ordering would mean adding a payment provider or an ordering platform,
    a way to receive and confirm orders during service, and a policy for sold-out specials.
 7. **Menu lineup.** Items come from the chalkboard menu and Facebook posts. Please confirm the
    current lineup, especially the rotating savory lunch specials and the baked goods.

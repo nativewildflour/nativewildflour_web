@@ -21,15 +21,21 @@ export const FEATURE_ICONS = ['heart', 'sunrise', 'cup', 'clock', 'pin', 'ship',
 
 export type FeatureIcon = (typeof FEATURE_ICONS)[number];
 
-const ICON_OPTIONS: readonly SelectOption[] = [
-  { value: 'heart', label: 'Heart' },
-  { value: 'sunrise', label: 'Sunrise' },
-  { value: 'cup', label: 'Coffee cup' },
-  { value: 'clock', label: 'Clock' },
-  { value: 'pin', label: 'Map pin' },
-  { value: 'ship', label: 'Cruise ship' },
-  { value: 'chat', label: 'Speech bubble' },
-];
+/** What the owner sees for each icon. Keyed by `FeatureIcon`, so a new icon must be named here. */
+const ICON_LABELS: Readonly<Record<FeatureIcon, string>> = {
+  heart: 'Heart',
+  sunrise: 'Sunrise',
+  cup: 'Coffee cup',
+  clock: 'Clock',
+  pin: 'Map pin',
+  ship: 'Cruise ship',
+  chat: 'Speech bubble',
+};
+
+const ICON_OPTIONS: readonly SelectOption[] = FEATURE_ICONS.map((value) => ({
+  value,
+  label: ICON_LABELS[value],
+}));
 
 /** One of the small cards under the bannock explainer. */
 export interface HomeFeature {
@@ -94,7 +100,7 @@ export const HOME_SPEC: DocumentSpec = {
         heading: {
           kind: 'text',
           label: 'Headline',
-          hint: 'The big line at the top. Search results use it as the page title too.',
+          hint: 'The big line at the top of the page. (The title shown in search results is set separately and does not change with it.)',
         },
         accentWord: {
           kind: 'text',

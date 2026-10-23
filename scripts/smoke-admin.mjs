@@ -24,10 +24,16 @@
  *   - `NETLIFY_BLOBS_CONTEXT`, the base64 payload Netlify injects into a function process,
  *     pointed at the local server so `getStore()` resolves without a single code change.
  *
- * `URL` and `DEPLOY_PRIME_URL` are deliberately left unset for most of the run: a passing run
- * must never reach the outside world, and `revalidated: false` is an asserted part of the
- * contract. The two scenarios that do exercise the refresh call point `URL` at a `node:http`
- * server started here, which records what it was asked for.
+ * A publish refreshes the site the request reached, so every request here is addressed to a
+ * local `node:http` stand-in for the site: a passing run must never reach the outside world.
+ * For most of the run that stand-in refuses every call at once (so `revalidated: false` is the
+ * asserted contract); the scenarios that exercise the refresh call address their requests to a
+ * second server started for the purpose, which records what it was asked for.
+ *
+ * A thin wrapper around `fetch` sits between the Blobs client and the local store. It is
+ * transparent unless a scenario arms it, to answer a write with a failure status (the store
+ * refusing a save) or to stamp read responses with the etag production sends, which turns every
+ * save into the conditional write it is on Netlify.
  */
 
 import assert from 'node:assert/strict';
@@ -166,9 +172,94 @@ process.env.NETLIFY_BLOBS_CONTEXT = Buffer.from(
 ).toString('base64');
 process.env.ADMIN_USERNAME = 'owner';
 process.env.ADMIN_PASSWORD = 'a-long-enough-passphrase';
-// No site to refresh unless a scenario stands one up. See the header note.
+// The refresh call goes to the request's own origin now; these are cleared so nothing in the
+// environment can point it anywhere else.
 delete process.env.URL;
 delete process.env.DEPLOY_PRIME_URL;
+
+/**
+ * The Blobs wire, wrapped. `blobFaults.put(entry)` may return a Response to answer a PUT with
+ * instead of the store; `blobFaults.etagReads` stamps successful reads with the store's own etag
+ * (the local server sends none, Netlify always does). Both are reset by `withBlobFaults`.
+ */
+const blobFaults = { put: null, etagReads: false, before: null };
+/**
+ * Netlify's cache purge API, stood in for: `purgeCache` from `@netlify/functions` posts to
+ * `https://api.netlify.com/api/v1/purge`, and no smoke run may reach the real one. Each call is
+ * recorded; `purgeApi.status` is what it answers.
+ */
+const purgeApi = { calls: [], status: 200 };
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (input, init = {}) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.origin === 'https://api.netlify.com') {
+    purgeApi.calls.push({
+      method: (init.method ?? 'GET').toUpperCase(),
+      path: url.pathname,
+      authorization: new Headers(init.headers).get('authorization'),
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : null,
+    });
+    return new Response(purgeApi.status < 400 ? null : 'purge refused', { status: purgeApi.status });
+  }
+  if (url.origin !== new URL(edgeURL).origin) return realFetch(input, init);
+  const method = (init.method ?? 'GET').toUpperCase();
+  const parts = url.pathname.split('/').slice(1);
+  const entry = {
+    method,
+    store: decodeURIComponent(parts[1] ?? ''),
+    key: parts.length > 2 ? decodeURIComponent(parts.slice(2).join('/')) : null,
+  };
+  // `blobFaults.before` — `{ match(entry), run() }` — runs once, just before the first matching
+  // call goes out: the way a scenario lands another request in the middle of this one. Cleared
+  // before it runs, so the nested request's own blob calls pass straight through.
+  if (blobFaults.before && blobFaults.before.match(entry)) {
+    const hook = blobFaults.before;
+    blobFaults.before = null;
+    await hook.run();
+  }
+  if (method === 'PUT' && blobFaults.put) {
+    const forced = blobFaults.put(entry);
+    if (forced) return forced;
+  }
+  const response = await realFetch(input, init);
+  if (
+    blobFaults.etagReads &&
+    (method === 'GET' || method === 'HEAD') &&
+    entry.key !== null &&
+    response.status === 200 &&
+    !response.headers.has('etag')
+  ) {
+    const { dataPath } = server.getLocalPaths(url);
+    const headers = new Headers(response.headers);
+    headers.set('etag', await BlobsServer.generateETag(dataPath));
+    return new Response(method === 'HEAD' ? null : await response.arrayBuffer(), {
+      status: 200,
+      headers,
+    });
+  }
+  return response;
+};
+
+async function withBlobFaults(faults, run) {
+  Object.assign(blobFaults, faults);
+  try {
+    return await run();
+  } finally {
+    blobFaults.put = null;
+    blobFaults.etagReads = false;
+    blobFaults.before = null;
+  }
+}
+
+/** A blob call to `key` in site store `store` by `method` — the shape `blobFaults.before` matches. */
+const blobCall = (method, store, key) => (entry) =>
+  entry.method === method && entry.store === `site:${store}` && entry.key === key;
+
+/** A PUT of `key` (any key: `null`) in `store` answered with `status`. The wire spells a site store `site:<name>`. */
+const refusePut = (store, key, status = 403) => (entry) =>
+  entry.store === `site:${store}` && (key === null || entry.key === key)
+    ? new Response(`refused ${status}`, { status })
+    : null;
 
 const AUTH = `Basic ${Buffer.from('owner:a-long-enough-passphrase').toString('base64')}`;
 const WRONG_AUTH = `Basic ${Buffer.from('owner:not-the-passphrase').toString('base64')}`;
@@ -193,7 +284,19 @@ try {
 // Harness
 // ---------------------------------------------------------------------------
 
-function request(method, route, { body, auth = AUTH } = {}) {
+/**
+ * The site every request is addressed to — and so the site a publish asks to refresh. Starts as
+ * a stand-in that refuses at once; `recordingSite` swaps in its own origin while it runs.
+ */
+const refusingSite = http.createServer((req, res) => {
+  res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('no site here');
+});
+await new Promise((resolve) => refusingSite.listen(0, '127.0.0.1', resolve));
+const REFUSING_ORIGIN = `http://127.0.0.1:${refusingSite.address().port}`;
+let siteOrigin = REFUSING_ORIGIN;
+
+function request(method, route, { body, auth = AUTH, headers: extra = {} } = {}) {
   const headers = auth === null ? {} : { authorization: auth };
   const init = { method, headers };
   if (body instanceof FormData) {
@@ -202,7 +305,8 @@ function request(method, route, { body, auth = AUTH } = {}) {
     init.body = JSON.stringify(body);
     headers['content-type'] = 'application/json';
   }
-  return new Request(`https://nativewildflour.test${route}`, init);
+  Object.assign(headers, extra);
+  return new Request(`${siteOrigin}${route}`, init);
 }
 
 const content = (method, route, options) => contentHandler(request(method, route, options));
@@ -212,9 +316,10 @@ const serveUpload = (method, route) => uploadsHandler(request(method, route, { a
 
 /**
  * A stand-in for the deployed site, recording what the publish endpoint asks of it. The
- * function reads `URL` per call, so pointing it here is enough to exercise the real path —
- * headers included, which is the half that matters: the refresh endpoint is auth-gated and a
- * publish that forgot to forward its credentials would fail silently in production.
+ * function refreshes the origin the request reached, so addressing requests here is enough to
+ * exercise the real path — headers included, which is the half that matters: the refresh
+ * endpoint is auth-gated and a publish that forgot to forward its credentials would fail
+ * silently in production.
  */
 async function recordingSite(status) {
   const requests = [];
@@ -228,11 +333,11 @@ async function recordingSite(status) {
     res.end(JSON.stringify({ ok: status < 400 }));
   });
   await new Promise((resolve) => site.listen(0, '127.0.0.1', resolve));
-  process.env.URL = `http://127.0.0.1:${site.address().port}`;
+  siteOrigin = `http://127.0.0.1:${site.address().port}`;
   return {
     requests,
     async stop() {
-      delete process.env.URL;
+      siteOrigin = REFUSING_ORIGIN;
       // `fetch` keeps its socket alive, so a plain close() would wait for a timeout.
       site.closeAllConnections();
       await new Promise((resolve) => site.close(resolve));
@@ -298,13 +403,32 @@ async function oversizedJpeg(limit) {
   throw new Error('could not generate a JPEG over the size limit');
 }
 
-function upload(buffer, { width, height, name, type = 'image/jpeg' }) {
+/** `small`: `{ buffer, width, height, type? }` — the 800px copy the editor sends with a wide photo. */
+function upload(buffer, { width, height, name, type = 'image/jpeg', small = null }) {
   const form = new FormData();
   form.set('file', new Blob([buffer], { type }), name);
   form.set('width', String(width));
   form.set('height', String(height));
   form.set('name', name);
+  if (small !== null) {
+    form.set('small', new Blob([small.buffer], { type: small.type ?? 'image/jpeg' }), 'small.jpg');
+    form.set('smallWidth', String(small.width));
+    form.set('smallHeight', String(small.height));
+  }
   return images('POST', '/admin/api/images', { body: form });
+}
+
+/** A photo nothing references yet, uploaded fresh — what each race scenario starts from. */
+async function freshPhoto(name, { width = 240, height = 180 } = {}) {
+  const small =
+    width > 800
+      ? { buffer: await jpeg(800, Math.round((height * 800) / width)), width: 800, height: Math.round((height * 800) / width) }
+      : null;
+  const { image } = await expectJson(
+    await upload(await jpeg(width, height), { width, height, name, small }),
+    201,
+  );
+  return { image, small };
 }
 
 /** The current home document, with one edit applied — the shape every content scenario uses. */
@@ -316,8 +440,9 @@ function homeWith(edit) {
 
 /** The gate's opening-hours range, as `scripts/verify-build.mjs` matches it (no `g` flag: a
  *  sticky lastIndex would make the same test alternate between true and false). */
+/** Where a document states the hours: the `{hours}` token, or a range typed out. */
 const HOURS_RANGE =
-  /\b\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*(?:–|—|-|to)\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b/i;
+  /\{hours\}|\b\d{1,2}(?::\d{2})?\s*(?:AM|PM)\s*(?:–|—|-|to)\s*\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b/i;
 
 /**
  * The first string in a document that renders an opening-hours range, with a handle to rewrite
@@ -485,20 +610,33 @@ await scenario('content: a menu note icon the page cannot draw is refused', asyn
  * now, so the two rule families reachable from their copy are pinned here. Both markers are read
  * from the canonical rules JSON, never typed in.
  */
-await scenario('content: an hours range that contradicts the spec is refused', async () => {
-  const document = structuredClone(DIRECTIONS_SEED);
-  const field = findHoursField(document);
-  assert.ok(field, 'the directions seed renders no opening-hours range to test the gate against');
-  field.parent[field.key] = field.value.replace(HOURS_RANGE, '10:00 AM – 3:00 PM');
+await scenario('content: hours or open days that contradict the spec are refused', async () => {
+  // Every common way of writing hours, not only the one the pages print: dotted a.m./p.m.,
+  // "until", a day range that takes in the closed day, an "open daily" claim — and
+  // no-break spaces and a non-breaking hyphen, which must read as what they look like.
+  const wrong = [
+    '10:00 AM – 3:00 PM',
+    'Sunday–Friday, 7 a.m. – 2 p.m.',
+    '7 AM until 2 PM',
+    'Monday–Saturday, 9:00 AM – 4:00 PM.',
+    'Open daily.',
+    '7\u00A0AM\u20112\u00A0PM',
+  ];
+  for (const replacement of wrong) {
+    const document = structuredClone(DIRECTIONS_SEED);
+    const field = findHoursField(document);
+    assert.ok(field, 'the directions seed states no opening hours to test the gate against');
+    field.parent[field.key] = field.value.replace(HOURS_RANGE, replacement);
 
-  const payload = await expectJson(
-    await content('PUT', '/admin/api/content/directions', { body: { document } }),
-    400,
-  );
-  assert.ok(
-    payload.issues.some((issue) => issue.path === field.path),
-    `expected an issue on ${field.path}, got ${JSON.stringify(payload.issues)}`,
-  );
+    const payload = await expectJson(
+      await content('PUT', '/admin/api/content/directions', { body: { document } }),
+      400,
+    );
+    assert.ok(
+      payload.issues.some((issue) => issue.path === field.path),
+      `"${replacement}": expected an issue on ${field.path}, got ${JSON.stringify(payload.issues)}`,
+    );
+  }
 });
 
 await scenario('content: a template placeholder in the copy is refused', async () => {
@@ -532,7 +670,7 @@ await scenario('content: a valid save publishes and stamps updatedAt', async () 
     200,
   );
   assert.equal(payload.ok, true);
-  assert.equal(payload.revalidated, false, 'no site URL is configured, so nothing may be called');
+  assert.equal(payload.revalidated, false, 'the stand-in site refuses the refresh, and that must not fail the save');
   assert.match(payload.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
 
   const saved = await expectJson(await content('GET', '/admin/api/content/home'), 200);
@@ -669,6 +807,285 @@ await scenario('content: a publish still succeeds when the refresh call fails', 
   }
 });
 
+/** The stored home lede and the number of home snapshots, read straight from the store. */
+async function homeState() {
+  const store = getStore('site-content', { consistency: 'strong' });
+  const raw = await store.get('home.json', { type: 'text' });
+  const { blobs } = await store.list({ prefix: 'home-versions/' });
+  return { lede: JSON.parse(raw).hero.lede, versions: blobs.length };
+}
+
+/**
+ * `@netlify/blobs` answers a conditional write with `{ modified: true }` for any status but 412,
+ * so a store that refuses the save must still be reported as a failure: nothing published, no
+ * refresh, no stray snapshot. Reads carry etags here, so every save is the conditional write it
+ * is in production.
+ */
+await scenario('content: a save the store refuses is reported, not published', async () => {
+  const site = await recordingSite(200);
+  try {
+    const before = await homeState();
+    const document = homeWith((home) => {
+      home.hero.lede = `${HOME_SEED.hero.lede} Refused by the store.`;
+    });
+    for (const key of ['home.json', null]) {
+      // First the page write is refused, then every write (the snapshot goes first).
+      const response = await withBlobFaults(
+        { etagReads: true, put: refusePut('site-content', key) },
+        () => content('PUT', '/admin/api/content/home', { body: { document } }),
+      );
+      const payload = await expectJson(response, 503);
+      assert.equal(payload.ok, false);
+      assert.deepEqual(await homeState(), before, 'the store must be exactly as it was');
+    }
+    assert.deepEqual(site.requests, [], 'a save that did not land must not refresh the site');
+
+    // The same save goes through once the store accepts it, conditional write and all.
+    const landed = await withBlobFaults({ etagReads: true }, () =>
+      content('PUT', '/admin/api/content/home', { body: { document } }),
+    );
+    await expectJson(landed, 200);
+    assert.equal((await homeState()).lede, document.hero.lede);
+  } finally {
+    await site.stop();
+  }
+});
+
+await scenario('content: a save based on an older version is refused with 409', async () => {
+  const loaded = await expectJson(await content('GET', '/admin/api/content/home'), 200);
+  const base = loaded.updatedAt;
+  const first = homeWith((home) => {
+    home.hero.lede = `${HOME_SEED.hero.lede} Edited on the phone.`;
+  });
+  const published = await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: first, baseUpdatedAt: base },
+    }),
+    200,
+  );
+
+  // A second tab still holding `base` must not overwrite what the first one published.
+  const stale = homeWith((home) => {
+    home.hero.lede = `${HOME_SEED.hero.lede} Edited on the laptop.`;
+  });
+  const refused = await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: stale, baseUpdatedAt: base },
+    }),
+    409,
+  );
+  assert.equal(refused.ok, false);
+  // `null` means "I started from nothing saved", which is not true of home any more.
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: stale, baseUpdatedAt: null },
+    }),
+    409,
+  );
+  assert.equal((await homeState()).lede, first.hero.lede);
+
+  // Based on the version that is actually live, the same edit goes through.
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: stale, baseUpdatedAt: published.updatedAt },
+    }),
+    200,
+  );
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: stale, baseUpdatedAt: 42 },
+    }),
+    400,
+  );
+});
+
+await scenario('content: version history is labelled by when each version was published', async () => {
+  const stamps = [];
+  for (const word of ['one', 'two', 'three']) {
+    const document = homeWith((home) => {
+      home.hero.lede = `${HOME_SEED.hero.lede} Version ${word}.`;
+    });
+    const payload = await expectJson(
+      await content('PUT', '/admin/api/content/home', { body: { document } }),
+      200,
+    );
+    stamps.push(payload.updatedAt);
+  }
+  const { versions } = await expectJson(
+    await content('GET', '/admin/api/content/home/versions'),
+    200,
+  );
+  // The newest snapshot holds version two: labelled with two's publish time, replaced by three.
+  assert.equal(versions[0].updatedAt, stamps[1]);
+  assert.equal(versions[0].replacedAt, stamps[2]);
+  assert.equal(versions[1].updatedAt, stamps[0]);
+  // Each save's snapshot key is its own, so a racing save can never delete another's.
+  assert.match(versions[0].key, /^home-versions\/\d{4}-\d{2}-\d{2}T[\d:.]+Z-[a-z0-9]{6}\.json$/);
+
+  const restored = await expectJson(
+    await content('POST', '/admin/api/content/home/restore', { body: { key: versions[0].key } }),
+    200,
+  );
+  assert.equal(restored.ok, true);
+  assert.equal((await homeState()).lede, `${HOME_SEED.hero.lede} Version two.`);
+});
+
+await scenario('content: a snapshot saved under the older key format still lists and restores', async () => {
+  const store = getStore('site-content', { consistency: 'strong' });
+  const older = homeWith((home) => {
+    home.hero.lede = `${HOME_SEED.hero.lede} From the old history.`;
+  });
+  older.updatedAt = '2020-01-01T09:00:00.000Z';
+  const key = 'home-versions/2020-01-02T09:00:00.000Z.json';
+  await store.set(key, JSON.stringify(older));
+  const { versions } = await expectJson(
+    await content('GET', '/admin/api/content/home/versions'),
+    200,
+  );
+  const entry = versions.find((version) => version.key === key);
+  assert.ok(entry, 'the older snapshot is missing from the listing');
+  assert.equal(entry.updatedAt, older.updatedAt, 'labelled by its own publish time, read from the blob');
+  await expectJson(
+    await content('POST', '/admin/api/content/home/restore', { body: { key } }),
+    200,
+  );
+  assert.equal((await homeState()).lede, older.hero.lede);
+});
+
+await scenario('content: restoring a damaged snapshot answers 422 with an owner message', async () => {
+  const store = getStore('site-content', { consistency: 'strong' });
+  const before = await homeState();
+  // Unparseable bytes, under a key in today's format, so only the content is wrong.
+  const garbled = 'home-versions/2021-03-04T05:06:07.000Z-zz9zz9.json';
+  await store.set(garbled, '{"version":1,"hero":{"lede":"cut off mid-wri');
+  const damaged = await expectJson(
+    await content('POST', '/admin/api/content/home/restore', { body: { key: garbled } }),
+    422,
+  );
+  assert.equal(damaged.ok, false);
+  assert.match(damaged.issues[0].message, /damaged and can't be restored/);
+
+  // Valid JSON that is no longer a page document is just as unrestorable.
+  const misshapen = 'home-versions/2021-03-04T05:06:08.000Z-zz8zz8.json';
+  await store.set(misshapen, JSON.stringify({ version: 1, hero: 'not a section' }));
+  const shapeless = await expectJson(
+    await content('POST', '/admin/api/content/home/restore', { body: { key: misshapen } }),
+    422,
+  );
+  assert.match(shapeless.issues[0].message, /damaged and can't be restored/);
+
+  // The damaged entries still list (labelled by their key's time), and nothing went live.
+  const { versions } = await expectJson(
+    await content('GET', '/admin/api/content/home/versions'),
+    200,
+  );
+  assert.ok(versions.some((version) => version.key === garbled));
+  await store.delete(garbled);
+  await store.delete(misshapen);
+  assert.deepEqual(await homeState(), before);
+});
+
+await scenario('content: the directions FAQ publishes with the {hours} token, not hand-typed hours', async () => {
+  // The default answers "What are your hours?" with the token; it publishes as-is…
+  const withToken = structuredClone(DIRECTIONS_SEED);
+  await expectJson(
+    await content('PUT', '/admin/api/content/directions', { body: { document: withToken } }),
+    200,
+  );
+  // …while the same answer typed out by hand (correct today, stale after the next change) is
+  // refused with a pointer to the token, and the token anywhere else is refused too.
+  const handTyped = structuredClone(DIRECTIONS_SEED);
+  const faq = handTyped.faq.items.find((item) => item.answer.includes('{hours}'));
+  assert.ok(faq, 'the directions default no longer uses {hours}');
+  faq.answer = 'Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday.';
+  const refused = await expectJson(
+    await content('PUT', '/admin/api/content/directions', { body: { document: handTyped } }),
+    400,
+  );
+  assert.ok(refused.issues.some((issue) => /\{hours\}/.test(issue.message)));
+  const misplaced = structuredClone(DIRECTIONS_SEED);
+  misplaced.tips.items[0] = 'We are here {hours}';
+  await expectJson(
+    await content('PUT', '/admin/api/content/directions', { body: { document: misplaced } }),
+    400,
+  );
+
+  // The steer is advisory: a version saved before it existed — the right hours, typed by hand —
+  // still restores, because a snapshot can't be edited first.
+  const store = getStore('site-content', { consistency: 'strong' });
+  const key = 'directions-versions/2021-05-06T07:08:09.000Z-old0ld.json';
+  await store.set(key, JSON.stringify({ ...handTyped, updatedAt: '2021-05-06T07:00:00.000Z' }));
+  await expectJson(
+    await content('POST', '/admin/api/content/directions/restore', { body: { key } }),
+    200,
+  );
+  const live = await expectJson(await content('GET', '/admin/api/content/directions'), 200);
+  assert.ok(live.document.faq.items.some((item) => item.answer === faq.answer));
+  // Wrong hours in a snapshot are still refused: only the steer is advisory.
+  const stale = structuredClone(handTyped);
+  stale.faq.items.find((item) => item.answer === faq.answer).answer = 'Sunday–Friday, 8 AM – 3 PM.';
+  const staleKey = 'directions-versions/2021-05-06T07:08:10.000Z-old1ld.json';
+  await store.set(staleKey, JSON.stringify(stale));
+  await expectJson(
+    await content('POST', '/admin/api/content/directions/restore', { body: { key: staleKey } }),
+    400,
+  );
+  await store.delete(staleKey);
+});
+
+await scenario('content: writes from another website, or not sent as JSON, are refused', async () => {
+  const before = await homeState();
+  const document = homeWith((home) => {
+    home.hero.lede = `${HOME_SEED.hero.lede} Sent from elsewhere.`;
+  });
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document },
+      headers: { origin: 'https://elsewhere.example' },
+    }),
+    403,
+  );
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document },
+      headers: { 'content-type': 'text/plain' },
+    }),
+    415,
+  );
+  const { versions } = await expectJson(
+    await content('GET', '/admin/api/content/home/versions'),
+    200,
+  );
+  await expectJson(
+    await content('POST', '/admin/api/content/home/restore', {
+      body: { key: versions[0].key },
+      headers: { origin: 'null' },
+    }),
+    403,
+  );
+  assert.deepEqual(await homeState(), before);
+
+  // The site's own origin, and no origin at all (server-side callers), still go through.
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document },
+      headers: { origin: siteOrigin },
+    }),
+    200,
+  );
+});
+
+await scenario('content: a field added as optional does not break documents saved before it', async () => {
+  // `hero.accentWord` is an optional text field: a stored page without the key must publish
+  // and load, with the field read as blank.
+  const document = homeWith((home) => {
+    delete home.hero.accentWord;
+  });
+  await expectJson(await content('PUT', '/admin/api/content/home', { body: { document } }), 200);
+  const loaded = await getContent('home');
+  assert.equal(loaded.document.hero.accentWord, '');
+});
+
 // ---------------------------------------------------------------------------
 // 3. Photos: upload, list, serve, reference, delete
 // ---------------------------------------------------------------------------
@@ -733,9 +1150,262 @@ await scenario('images: once the reference is cleared the photo deletes', async 
   });
   await expectJson(await content('PUT', '/admin/api/content/home', { body: { document } }), 200);
 
+  // The page no longer shows it, but the version just replaced does — and a restore would put
+  // it back on the site — so the library still refuses, naming the history.
+  // The library says so up front: not on a page, but held by the home page's history.
+  const listing = await expectJson(await images('GET', '/admin/api/images'), 200);
+  const listed = listing.images.find((image) => image.id === photo.id);
+  assert.deepEqual(listed.usedBy, []);
+  assert.deepEqual(listed.inHistory, ['home']);
+  const kept = await expectJson(await images('DELETE', `/admin/api/images/${photo.id}`), 409);
+  assert.match(kept.issues[0].message, /saved versions/);
+
+  // Once no saved version holds it either, it deletes.
+  const store = getStore('site-content', { consistency: 'strong' });
+  const { blobs } = await store.list({ prefix: 'home-versions/' });
+  for (const blob of blobs) {
+    const raw = await store.get(decodeURIComponent(blob.key), { type: 'text' });
+    if (raw?.includes(photo.id)) await store.delete(decodeURIComponent(blob.key));
+  }
+  const cleared = await expectJson(await images('GET', '/admin/api/images'), 200);
+  assert.deepEqual(cleared.images.find((image) => image.id === photo.id).inHistory, []);
   const payload = await expectJson(await images('DELETE', `/admin/api/images/${photo.id}`), 200);
   assert.equal(payload.ok, true);
   await expectJson(await images('GET', `/admin/api/images/${photo.id}`), 404);
+});
+
+await scenario('images: a page that shows a deleted photo is refused, naming the slot', async () => {
+  // `photo` was deleted just above. Publishing it (or restoring a version holding it) would put
+  // a broken picture on the live page.
+  const document = homeWith((home) => {
+    home.bannock.photo.image = { id: photo.id, width: photo.width, height: photo.height };
+  });
+  const payload = await expectJson(
+    await content('PUT', '/admin/api/content/home', { body: { document } }),
+    400,
+  );
+  assert.equal(payload.issues[0].path, 'bannock.photo.image');
+  assert.match(payload.issues[0].message, /no longer in the photo library/);
+});
+
+/** Every key under `prefix` in the content store, as written. */
+async function contentKeys(prefix) {
+  const { blobs } = await getStore('site-content', { consistency: 'strong' }).list({ prefix });
+  return blobs.map((blob) => decodeURIComponent(blob.key)).sort();
+}
+
+await scenario('race: a delete that lands mid-publish rolls the publish back', async () => {
+  // The publish checks its photos, then — before its write — the delete checks the documents,
+  // finds nothing using the photo and removes it. The publish's re-check after its write must
+  // catch that and put the previous page back.
+  const { image } = await freshPhoto('mid-publish.jpg');
+  const store = getStore('site-content', { consistency: 'strong' });
+  const before = await store.get('home.json', { type: 'text' });
+  const snapshotsBefore = await contentKeys('home-versions/');
+  let deleted = null;
+
+  const document = homeWith((home) => {
+    home.hero.lede = SECOND_LEDE;
+    home.bannock.photo.image = { id: image.id, width: image.width, height: image.height };
+  });
+  const response = await withBlobFaults(
+    {
+      before: {
+        match: blobCall('PUT', 'site-content', 'home.json'),
+        run: async () => {
+          deleted = await expectJson(await images('DELETE', `/admin/api/images/${image.id}`), 200);
+        },
+      },
+    },
+    () => content('PUT', '/admin/api/content/home', { body: { document } }),
+  );
+  assert.ok(deleted?.ok, 'the delete never ran in the middle of the publish');
+
+  const payload = await expectJson(response, 409);
+  assert.equal(payload.issues[0].path, 'bannock.photo.image');
+  assert.match(payload.issues[0].message, /deleted while you were publishing/);
+  assert.equal(await store.get('home.json', { type: 'text' }), before, 'the previous page is back');
+  assert.deepEqual(
+    await contentKeys('home-versions/'),
+    snapshotsBefore,
+    'the rolled-back save left a snapshot behind',
+  );
+  await expectJson(await images('GET', `/admin/api/images/${image.id}`), 404);
+});
+
+await scenario('race: a publish that lands mid-delete puts the photo back exactly', async () => {
+  // The other order: the delete checks the documents, then — before it removes anything — a
+  // publish showing the photo checks it (still there) and lands. The delete's re-check after
+  // its own delete must find that and restore the photo and its small copy, bytes and all.
+  const { image } = await freshPhoto('mid-delete.jpg', { width: 1200, height: 900 });
+  const imageStore = getStore('site-images', { consistency: 'strong' });
+  const mainBefore = await imageStore.getWithMetadata(image.id, { type: 'arrayBuffer' });
+  const smallBefore = await imageStore.getWithMetadata(`w800/${image.id}`, { type: 'arrayBuffer' });
+  assert.ok(smallBefore, 'the small copy was not stored on upload');
+  let published = null;
+
+  const document = homeWith((home) => {
+    home.hero.lede = SECOND_LEDE;
+    home.bannock.photo.image = { id: image.id, width: image.width, height: image.height };
+  });
+  const response = await withBlobFaults(
+    {
+      before: {
+        match: blobCall('DELETE', 'site-images', image.id),
+        run: async () => {
+          published = await expectJson(
+            await content('PUT', '/admin/api/content/home', { body: { document } }),
+            200,
+          );
+        },
+      },
+    },
+    () => images('DELETE', `/admin/api/images/${image.id}`),
+  );
+  assert.ok(published?.ok, 'the publish never ran in the middle of the delete');
+
+  const refused = await expectJson(response, 409);
+  assert.match(refused.issues[0].message, /still in use on/);
+  const mainAfter = await imageStore.getWithMetadata(image.id, { type: 'arrayBuffer' });
+  const smallAfter = await imageStore.getWithMetadata(`w800/${image.id}`, { type: 'arrayBuffer' });
+  assert.deepEqual(Buffer.from(mainAfter.data), Buffer.from(mainBefore.data));
+  assert.deepEqual(mainAfter.metadata, mainBefore.metadata);
+  assert.deepEqual(Buffer.from(smallAfter.data), Buffer.from(smallBefore.data));
+  assert.deepEqual(smallAfter.metadata, smallBefore.metadata);
+  assert.equal((await serveUpload('GET', `/images/uploads/${image.id}`)).status, 200);
+  assert.equal((await serveUpload('GET', `/images/uploads/w800/${image.id}`)).status, 200);
+
+  // Leave the home page as the scenarios below expect it: no photo.
+  await expectJson(
+    await content('PUT', '/admin/api/content/home', {
+      body: { document: homeWith((home) => void (home.hero.lede = SECOND_LEDE)) },
+    }),
+    200,
+  );
+});
+
+await scenario('images: a delete purges the CDN copy through Netlify, best-effort', async () => {
+  const saved = { token: process.env.NETLIFY_PURGE_API_TOKEN, site: process.env.SITE_ID };
+  process.env.NETLIFY_PURGE_API_TOKEN = 'smoke-purge-token';
+  process.env.SITE_ID = 'smoke-site-id';
+  purgeApi.calls = [];
+  try {
+    const { image } = await freshPhoto('purged.jpg', { width: 1000, height: 750 });
+    await expectJson(await images('DELETE', `/admin/api/images/${image.id}`), 200);
+    assert.equal(purgeApi.calls.length, 1, 'one purge call per delete');
+    const [call] = purgeApi.calls;
+    assert.equal(call.method, 'POST');
+    assert.equal(call.path, '/api/v1/purge');
+    assert.equal(call.authorization, 'Bearer smoke-purge-token');
+    // One tag covers the photo and its small copy: `uploads.mts` stamps both with it.
+    assert.deepEqual(call.body.cache_tags, [`upload-${image.id}`]);
+    assert.equal(call.body.site_id, 'smoke-site-id');
+    const store = getStore('site-images', { consistency: 'strong' });
+    assert.equal(await store.getMetadata(`w800/${image.id}`), null, 'the small copy was left behind');
+
+    // A purge the API refuses is logged, never a failed delete — the photo is already gone.
+    purgeApi.status = 500;
+    const { image: second } = await freshPhoto('purge-refused.jpg');
+    await expectJson(await images('DELETE', `/admin/api/images/${second.id}`), 200);
+    assert.equal(purgeApi.calls.length, 2);
+  } finally {
+    purgeApi.status = 200;
+    if (saved.token === undefined) delete process.env.NETLIFY_PURGE_API_TOKEN;
+    else process.env.NETLIFY_PURGE_API_TOKEN = saved.token;
+    if (saved.site === undefined) delete process.env.SITE_ID;
+    else process.env.SITE_ID = saved.site;
+  }
+});
+
+await scenario('images: without a purge token a delete skips the purge', async () => {
+  purgeApi.calls = [];
+  const { image } = await freshPhoto('unpurged.jpg');
+  await expectJson(await images('DELETE', `/admin/api/images/${image.id}`), 200);
+  assert.equal(purgeApi.calls.length, 0);
+});
+
+await scenario('images: a wide photo stores its 800px copy, which the library never lists', async () => {
+  const smallBytes = await jpeg(800, 600);
+  const { image } = await expectJson(
+    await upload(await jpeg(1200, 900), {
+      width: 1200,
+      height: 900,
+      name: 'wide.jpg',
+      small: { buffer: smallBytes, width: 800, height: 600 },
+    }),
+    201,
+  );
+  const listing = await expectJson(await images('GET', '/admin/api/images'), 200);
+  assert.ok(listing.images.some((entry) => entry.id === image.id));
+  assert.ok(
+    listing.images.every((entry) => !entry.id.includes('/')),
+    'a small copy was listed as a photo of its own',
+  );
+  const stored = await getStore('site-images', { consistency: 'strong' }).getMetadata(
+    `w800/${image.id}`,
+  );
+  assert.deepEqual(stored.metadata, { width: 800, height: 600, bytes: smallBytes.length });
+  await expectJson(await images('DELETE', `/admin/api/images/${image.id}`), 200);
+});
+
+await scenario('images: a small copy that is not what srcset would claim is refused', async () => {
+  const wide = await jpeg(1200, 900);
+  const cases = [
+    // Not 800 wide.
+    [{ width: 1200, height: 900, small: { buffer: await jpeg(640, 480), width: 640, height: 480 } }, 400],
+    // The wrong shape.
+    [{ width: 1200, height: 900, small: { buffer: await jpeg(800, 800), width: 800, height: 800 } }, 400],
+    // A photo no wider than its copy would be.
+    [{ width: 800, height: 600, small: { buffer: await jpeg(800, 600), width: 800, height: 600 } }, 400],
+    // Not a JPEG.
+    [
+      {
+        width: 1200,
+        height: 900,
+        small: { buffer: await png(800, 600), width: 800, height: 600, type: 'image/png' },
+      },
+      415,
+    ],
+  ];
+  for (const [form, status] of cases) {
+    const payload = await expectJson(
+      await upload(form.width === 800 ? await jpeg(800, 600) : wide, { ...form, name: 'bad-small.jpg' }),
+      status,
+    );
+    assert.equal(payload.issues[0].path, 'small');
+  }
+});
+
+await scenario('images: an upload the store refuses is reported as failed, not stored', async () => {
+  const before = await expectJson(await images('GET', '/admin/api/images'), 200);
+  const response = await withBlobFaults({ put: refusePut('site-images', null) }, async () =>
+    upload(await jpeg(64, 48), { width: 64, height: 48, name: 'refused.jpg' }),
+  );
+  const payload = await expectJson(response, 503);
+  assert.equal(payload.ok, false);
+  const after = await expectJson(await images('GET', '/admin/api/images'), 200);
+  assert.equal(after.images.length, before.images.length, 'a refused upload must not be listed');
+});
+
+await scenario('images: an upload from another website is refused', async () => {
+  const form = new FormData();
+  form.set('file', new Blob([await jpeg(32, 32)], { type: 'image/jpeg' }), 'x.jpg');
+  form.set('width', '32');
+  form.set('height', '32');
+  form.set('name', 'x.jpg');
+  await expectJson(
+    await images('POST', '/admin/api/images', {
+      body: form,
+      headers: { origin: 'https://elsewhere.example' },
+    }),
+    403,
+  );
+  await expectJson(
+    await images('DELETE', '/admin/api/images/20260101-000000-zzzzzz.jpg', {
+      headers: { origin: 'https://elsewhere.example' },
+    }),
+    403,
+  );
 });
 
 await scenario('images: a PNG is refused as the wrong file type', async () => {
@@ -801,6 +1471,48 @@ await scenario('uploads: a stored photo is served with immutable cache headers',
   assert.equal(head.headers.get('cache-control'), IMMUTABLE);
   assert.equal(head.headers.get('content-length'), String(bytes.length));
   assert.equal((await head.arrayBuffer()).byteLength, 0, 'a HEAD response carries no body');
+});
+
+await scenario('uploads: the 800px copy is served at w800, and older photos fall back', async () => {
+  const smallBytes = await jpeg(800, 600);
+  const { image } = await expectJson(
+    await upload(await jpeg(1200, 900), {
+      width: 1200,
+      height: 900,
+      name: 'deck.jpg',
+      small: { buffer: smallBytes, width: 800, height: 600 },
+    }),
+    201,
+  );
+  const response = await serveUpload('GET', `/images/uploads/w800/${image.id}`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('content-type'), 'image/jpeg');
+  assert.equal(response.headers.get('cache-control'), IMMUTABLE);
+  assert.equal(response.headers.get('netlify-cdn-cache-control'), IMMUTABLE);
+  // The photo's own tag, so the purge a delete makes drops both copies.
+  assert.equal(response.headers.get('netlify-cache-tag'), `upload-${image.id}`);
+  assert.equal((await response.arrayBuffer()).byteLength, smallBytes.length);
+  const head = await serveUpload('HEAD', `/images/uploads/w800/${image.id}`);
+  assert.equal(head.headers.get('content-length'), String(smallBytes.length));
+
+  // `photo` (uploaded above at 320px) has no copy — the w800 URL answers with the photo itself.
+  const fallback = await serveUpload('GET', `/images/uploads/w800/${photo.id}`);
+  assert.equal(fallback.status, 200);
+  assert.equal((await fallback.arrayBuffer()).byteLength, photo.bytes);
+  const fallbackHead = await serveUpload('HEAD', `/images/uploads/w800/${photo.id}`);
+  assert.equal(fallbackHead.headers.get('content-length'), String(photo.bytes));
+
+  assert.equal((await serveUpload('GET', '/images/uploads/w800/20260101-000000-zzzzzz.jpg')).status, 404);
+  assert.equal((await serveUpload('GET', '/images/uploads/w800/not-an-id')).status, 400);
+});
+
+await scenario('uploads: the public srcset offers the 800px copy only for wider photos', async () => {
+  const { imageSrcSet } = await import('../src/lib/content/images.ts');
+  assert.equal(
+    imageSrcSet({ id: 'a.jpg', width: 1600, height: 1200 }),
+    '/images/uploads/w800/a.jpg 800w, /images/uploads/a.jpg 1600w',
+  );
+  assert.equal(imageSrcSet({ id: 'a.jpg', width: 800, height: 600 }), undefined);
 });
 
 await scenario('uploads: an unknown id is a 404 and a malformed one a 400', async () => {
@@ -890,6 +1602,8 @@ await scenario('loader: a document the site cannot parse throws, naming it', asy
 // Report
 // ---------------------------------------------------------------------------
 
+refusingSite.closeAllConnections();
+await new Promise((resolve) => refusingSite.close(resolve));
 await server.stop();
 await rm(workspace, { recursive: true, force: true });
 

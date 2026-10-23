@@ -8,6 +8,16 @@ export interface DockCardProps {
 }
 
 /**
+ * The DOM id (and `/directions/` anchor) of a dock card. Dock ids are the owner's slugs, so a
+ * bare slug could land on a fixed id on the page (`main`, a section heading). `SLUG` forbids
+ * "--" and no fixed id on the site contains it, so `dock--<id>` can equal none of them — the
+ * same convention as `menuSectionDomId`.
+ */
+export function dockDomId(dockId: string): string {
+  return `dock--${dockId}`;
+}
+
+/**
  * One cruise dock: name, walking-time badge, one-line summary and the numbered
  * walk drawn as a dotted route line. Heading is an `h3` — the page supplies
  * the `h2` above it.
@@ -15,15 +25,15 @@ export interface DockCardProps {
 export function DockCard({ dock, className = '' }: DockCardProps) {
   return (
     <article
-      id={dock.id}
+      id={dockDomId(dock.id)}
       className={`flex h-full flex-col rounded-3xl bg-snow p-6 shadow-card ring-1 ring-bark/10 transition duration-300 ease-out motion-safe:hover:-translate-y-1 hover:shadow-lift ${className}`.trim()}
     >
       <h3 className="text-xl font-black text-bark sm:text-2xl">{dock.name}</h3>
 
       <p className="mt-3">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-sky/60 px-3 py-1 text-sm font-bold text-bark">
-          <ClockIcon className="size-4" />
-          {dock.walkMinutes} walk
+        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-sky/60 px-3 py-1 text-sm font-bold text-bark">
+          <ClockIcon className="size-4 shrink-0" />
+          <span className="min-w-0">{dock.walkMinutes} walk</span>
         </span>
       </p>
 
@@ -39,7 +49,7 @@ export function DockCard({ dock, className = '' }: DockCardProps) {
             >
               {index + 1}
             </span>
-            <span className="text-bark/85">{step}</span>
+            <span className="min-w-0 text-bark/85">{step}</span>
           </li>
         ))}
       </ol>

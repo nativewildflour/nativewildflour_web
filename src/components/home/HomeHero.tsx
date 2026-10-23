@@ -13,13 +13,35 @@ export interface HomeHeroProps {
   readonly hero: HomeContent['hero'];
 }
 
+/** A letter or digit in any script: one beside a match makes it part of a longer word. */
+const WORD_CHAR = /[\p{L}\p{N}]/u;
+
+/**
+ * Where the accent word sits in the headline: its first whole-word occurrence ("Alaska" in
+ * "Bannock in Skagway, Alaska", not inside an earlier "Alaskan"), or, failing that, its first
+ * occurrence anywhere — the editor only checks that the headline contains the word, so a
+ * deliberate part-word emphasis still highlights. Letters and digits on either side (any
+ * script) make a match part of a longer word.
+ */
+function accentIndex(heading: string, accentWord: string): number {
+  if (accentWord === '') return -1;
+  // A plain indexOf walk rather than a lookbehind regex: the admin preview renders this on the
+  // owner's phone, and older Safari versions throw on lookbehind.
+  for (let at = heading.indexOf(accentWord); at >= 0; at = heading.indexOf(accentWord, at + 1)) {
+    const before = heading.slice(0, at).at(-1) ?? '';
+    const after = heading.slice(at + accentWord.length).charAt(0);
+    if (!WORD_CHAR.test(before) && !WORD_CHAR.test(after)) return at;
+  }
+  return heading.indexOf(accentWord);
+}
+
 /**
  * The headline with one word picked out in fireweed pink. The word is content, not markup, so
  * the owner can move the emphasis without touching a component; a word that is not in the
  * headline simply leaves it unmarked (the editor refuses to publish that, so it never ships).
  */
 function accentedHeading(heading: string, accentWord: string): ReactNode {
-  const at = accentWord === '' ? -1 : heading.indexOf(accentWord);
+  const at = accentIndex(heading, accentWord);
   if (at < 0) return heading;
   return (
     <>
@@ -61,7 +83,7 @@ export function HomeHero({ hero }: HomeHeroProps) {
         {/* Text is DOM-first so the h1 leads for screen readers and on small screens,
             where the message must own the first viewport; md+ places the logo badge
             back into the left column via explicit grid placement. */}
-        <div className="grid items-center gap-10 pt-16 pb-28 sm:pt-24 sm:pb-36 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14 lg:pb-44">
+        <div className="grid grid-cols-1 items-center gap-10 pt-16 pb-28 sm:pt-24 sm:pb-36 md:grid-cols-[auto_minmax(0,1fr)] md:gap-14 lg:pb-44">
           <div className="md:col-start-2 md:row-start-1">
             <p className="rise flex items-center gap-2 font-display text-base font-bold tracking-wide text-wood">
               <FireweedSprig bloom className="h-7 w-5 shrink-0" />

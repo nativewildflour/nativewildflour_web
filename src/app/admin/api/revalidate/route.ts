@@ -16,17 +16,25 @@
 
 import { revalidatePath } from 'next/cache';
 
+import { NAV_LINKS } from '@/data/nav';
+
 import { checkBasicAuth, unauthorized } from '../../../../../netlify/shared/basic-auth';
+import { guardWrite } from '../../../../../netlify/shared/request-guard';
 
 /** Auth is read per request, so this handler must never be cached or prerendered. */
 export const dynamic = 'force-dynamic';
 
 /**
- * Literal paths, no trailing slashes: `revalidatePath` addresses the route file structure, in
- * which the `(site)` group and the `trailingSlash` setting do not appear. The sitemap rides
- * along because each page's `lastmod` is the newest publish stamp among its documents.
+ * The public pages are the primary navigation, so the list comes from `NAV_LINKS` and a new page
+ * is refreshed as soon as it is linked. Trailing slashes come off (except on `/`):
+ * `revalidatePath` addresses the route file structure, in which the `(site)` group and the
+ * `trailingSlash` setting do not appear. The sitemap rides along because each page's `lastmod`
+ * is the newest publish stamp among its documents.
  */
-const PATHS = ['/', '/menu', '/about', '/directions', '/sitemap.xml'] as const;
+const PATHS: readonly string[] = [
+  ...NAV_LINKS.map(({ href }) => (href === '/' ? href : href.replace(/\/+$/, ''))),
+  '/sitemap.xml',
+];
 
 export async function POST(request: Request): Promise<Response> {
   const username = process.env.ADMIN_USERNAME ?? '';
@@ -37,6 +45,10 @@ export async function POST(request: Request): Promise<Response> {
   if (!checkBasicAuth(request.headers.get('authorization'), username, password)) {
     return unauthorized();
   }
+  // Same-origin only. Its legitimate callers — the content function and the deploy plugin —
+  // send no Origin and no body, so only the origin is checked.
+  const refused = guardWrite(request, null);
+  if (refused !== null) return refused;
 
   for (const path of PATHS) revalidatePath(path);
 

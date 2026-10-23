@@ -71,6 +71,11 @@
     line-height: 1.65;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
+    /* Owner text can hold one long unbroken run (a pasted link). `break-word` lets it break
+       once it overflows its line without lowering any box's min-content size, so button rows
+       still wrap whole buttons. Boxes that must shrink below such a run carry `min-w-0` (flex
+       items) or sit in a `grid-cols-1` track (grids) where the text renders. */
+    overflow-wrap: break-word;
   }
 
   /* Paper grain over the whole page: a tiny inline SVG noise tile at very low

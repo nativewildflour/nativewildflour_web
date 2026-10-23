@@ -56,9 +56,15 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
-import type { DocumentKey, DocumentParser, LoadResult, VersionEntry } from '@/components/admin/api';
+import type {
+  DocumentKey,
+  DocumentParser,
+  LoadResult,
+  SaveResult,
+  VersionEntry,
+} from '@/components/admin/api';
 import { loadDocument, loadRules, publishDocument, restoreVersion } from '@/components/admin/api';
-import { clearDraft, readDraft, writeDraft } from '@/components/admin/draft-storage';
+import { clearDraft, clearDraftIfOwned, readDraft, writeDraft } from '@/components/admin/draft-storage';
 import type { StoredDraft } from '@/components/admin/draft-storage';
 import { createEditorHistory, documentsEqual, editorReducer } from '@/components/admin/editor-state';
 import type { StatusMessage } from '@/components/admin/StatusBanner';
@@ -95,8 +101,14 @@ export interface DocumentEditorOptions<T> {
   readonly label: string;
   /** The committed seed, already parsed — what the editor shows when no API answers. */
   readonly seed: T;
-  /** Structural parse, used for the server's document and for a stored draft. */
+  /** Structural parse, used for the server's document (and for a stored draft, by default). */
   readonly parse: DocumentParser<T>;
+  /**
+   * The check a stored draft must pass to be offered. It should accept anything the fields can
+   * produce mid-edit — a draft is autosaved between keystrokes, so it may hold a value only the
+   * publish check refuses, and that is still the owner's work. Defaults to `parse`.
+   */
+  readonly parseDraft?: DocumentParser<T>;
   /** Copy validation for the working document. Keep the reference stable. */
   readonly validate: (document: T, rules: ContentRules | null) => readonly CopyIssue[];
   /**
@@ -114,6 +126,12 @@ export interface DocumentEditor<T> {
   /** The server's own message when the document could not load (`error` mode). */
   readonly loadError: string | null;
   readonly lastSaved: string | null;
+  /**
+   * The `updatedAt` of the published version these edits build on — sent with a publish so
+   * the server can refuse to overwrite a newer one. `null` = built on the default (nothing
+   * published yet); `undefined` = unknown, so no check is asked for.
+   */
+  readonly baseVersion: string | null | undefined;
 
   readonly present: T;
   readonly applyEdit: (next: T, coalesceKey?: string) => void;
@@ -163,6 +181,9 @@ const PUBLISHED_NO_HOOK =
   'Published and saved — the site couldn’t be told to refresh right away, so the change appears within a minute.';
 const RESTORED_LIVE =
   'Restored. The site is updating now — reload it in a moment to see the change.';
+/** Shown when a publish is refused because the store moved on since this editor loaded. */
+const CHANGED_ELSEWHERE =
+  'This page was changed somewhere else since you opened it. Reload to see the latest, your draft is kept.';
 const RESTORED_NO_HOOK =
   'Restored and saved — the site couldn’t be told to refresh right away, so the change appears within a minute.';
 
@@ -189,6 +210,19 @@ export function focusSoon(target: string | readonly string[], attempts = 5): voi
     }
     if (attempts > 0) focusSoon(ids, attempts - 1);
   });
+}
+
+/**
+ * The banner text for a save that failed without a verdict on the content. No response at
+ * all is a connection problem worth retrying; a server that answered and said why gets its
+ * own sentence, which is final — retrying the same request would only say it again.
+ */
+function failureText(result: Extract<SaveResult, { kind: 'failed' }>, what: string): string {
+  if (result.status === null) return `${what} — check your connection and try again.`;
+  if (result.message !== undefined && result.message !== '') {
+    return `${what}: ${result.message}`;
+  }
+  return `${what} — try again in a moment.`;
 }
 
 export function useDocumentEditor<T extends object>(
@@ -222,6 +256,17 @@ export function useDocumentEditor<T extends object>(
    */
   const [draftDeferred, setDraftDeferred] = useState(false);
   const [versionsReload, setVersionsReload] = useState(0);
+  /** See `DocumentEditor.baseVersion`. Never `lastSaved`, which can be a local guess. */
+  const [baseVersion, setBaseVersion] = useState<string | null | undefined>(undefined);
+  /**
+   * Which editor wrote a stored draft. Two tabs on one document share its slot, and the
+   * clean-state cleanup only clears a draft carrying this id — see `clearDraftIfOwned`.
+   */
+  const [tabId] = useState(() =>
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
+  );
   /** The server's own message when the document could not load (`error` mode). */
   const [loadError, setLoadError] = useState<string | null>(null);
   /** Content rules from the auth-gated endpoint; `null` until fetched (or when unreachable). */
@@ -268,16 +313,22 @@ export function useDocumentEditor<T extends object>(
 
   // --- Initial load ---------------------------------------------------------
   useEffect(() => {
-    const { doc: key, seed, parse } = settings.current;
+    const { doc: key, parse, parseDraft } = settings.current;
     let cancelled = false;
     void loadDocument(key, parse).then((result) => {
       if (cancelled) return;
-      let loaded = seed;
       if (result.kind === 'ok') {
-        loaded = result.document;
         dispatch({ type: 'load', document: result.document });
         setMode(result.source === 'blob' ? 'live' : 'seed');
         setLastSaved(result.updatedAt);
+        setBaseVersion(result.source === 'blob' ? (result.updatedAt ?? undefined) : null);
+        // A draft is only ever compared with — and offered over — the real document. In the
+        // read-only modes the editor holds the built-in default, so the draft stays put,
+        // unread, for a visit that can load the live copy.
+        const draft = readDraft(key, parseDraft ?? parse);
+        if (draft && !documentsEqual(draft.document, result.document)) {
+          setDraftPrompt(draft);
+        }
       } else if (result.kind === 'unauthorized') {
         setMode('expired');
         setStatus({ tone: 'error', text: SIGN_IN_EXPIRED });
@@ -288,10 +339,6 @@ export function useDocumentEditor<T extends object>(
         setMode('offline');
       }
       setPhase('ready');
-      const draft = readDraft(key, parse);
-      if (draft && !documentsEqual(draft.document, loaded)) {
-        setDraftPrompt(draft);
-      }
     });
     return () => {
       cancelled = true;
@@ -312,20 +359,29 @@ export function useDocumentEditor<T extends object>(
   }, []);
 
   // --- Draft autosave -------------------------------------------------------
-  // One localStorage slot per document holds the draft. Paused while the resume prompt is
-  // open, so the undecided draft is never overwritten or cleared out from under it. After a
-  // dismissed prompt (`draftDeferred`) the clean-state cleanup is skipped too — the deferred
-  // draft is the only copy of that work. Once the owner edits, the debounced `writeDraft`
-  // overwrites the slot, which is the legitimate fate of a single-slot draft.
+  // One localStorage slot per document holds the draft, and only a document that really
+  // loaded (`live` or `seed`) ever touches it: in the read-only modes the editor holds the
+  // built-in default, and neither writing that nor clearing over it would be the owner's work.
+  // Paused while the resume prompt is open, so the undecided draft is never overwritten or
+  // cleared out from under it. After a dismissed prompt (`draftDeferred`) the clean-state
+  // cleanup is skipped too — the deferred draft is the only copy of that work. The cleanup
+  // otherwise removes only a draft this tab wrote (or one equal to the baseline), so a second
+  // tab opened clean never wipes the first tab's autosave. Once the owner edits, the debounced
+  // `writeDraft` claims the slot — last edit wins, the fate of a single-slot draft.
+  const baseline = history.baseline;
+  const draftsEnabled = mode === 'live' || mode === 'seed';
   useEffect(() => {
-    if (phase !== 'ready' || draftPrompt !== null) return;
+    if (phase !== 'ready' || !draftsEnabled || draftPrompt !== null) return;
     if (!dirty) {
-      if (!draftDeferred) clearDraft(doc);
+      if (!draftDeferred) clearDraftIfOwned(doc, tabId, baseline);
       return;
     }
-    const timer = window.setTimeout(() => writeDraft(doc, present), 400);
+    const timer = window.setTimeout(
+      () => writeDraft(doc, present, { tabId, base: baseVersion }),
+      400,
+    );
     return () => window.clearTimeout(timer);
-  }, [doc, present, dirty, phase, draftPrompt, draftDeferred]);
+  }, [doc, present, baseline, dirty, phase, draftsEnabled, draftPrompt, draftDeferred, tabId, baseVersion]);
 
   // --- Unsaved-changes guard ------------------------------------------------
   useEffect(() => {
@@ -421,8 +477,21 @@ export function useDocumentEditor<T extends object>(
   async function doPublish() {
     setBusy(true);
     setStatus(null);
-    const result = await publishDocument(doc, present);
+    // The base lets the server refuse to overwrite a version this editor never saw (a
+    // publish from another device or tab). Unknown → omitted, so no check is asked for.
+    const result =
+      baseVersion === undefined
+        ? await publishDocument(doc, present)
+        : await publishDocument(doc, present, baseVersion);
     setBusy(false);
+    if (result.kind === 'conflict') {
+      // Someone else published (or restored) since this editor loaded. Nothing is marked
+      // published; the draft is written now rather than after the debounce, so a reload a
+      // moment later still finds every keystroke.
+      if (draftsEnabled) writeDraft(doc, present, { tabId, base: baseVersion });
+      showStatus({ tone: 'error', text: CHANGED_ELSEWHERE });
+      return;
+    }
     if (result.kind === 'ok') {
       // Baseline exactly the snapshot that was sent: keystrokes typed while the PUT was in
       // flight stay dirty, keep their autosaved draft, and keep beforeunload armed.
@@ -430,6 +499,9 @@ export function useDocumentEditor<T extends object>(
       setDraftDeferred(false);
       setMode('live');
       setLastSaved(result.updatedAt ?? new Date().toISOString());
+      // An unknown new version means the next publish cannot name its base, so it asks for
+      // no check (`undefined`) rather than claiming "nothing published yet" (`null`).
+      setBaseVersion(result.updatedAt ?? undefined);
       setVersionsReload((value) => value + 1);
       showStatus(
         result.revalidated
@@ -445,7 +517,7 @@ export function useDocumentEditor<T extends object>(
         text: `The server declined this ${label} — the issues it reported are listed below.`,
       });
     } else {
-      showStatus({ tone: 'error', text: 'Publishing failed — check your connection and try again.' });
+      showStatus({ tone: 'error', text: failureText(result, 'Publishing failed') });
     }
   }
 
@@ -454,7 +526,11 @@ export function useDocumentEditor<T extends object>(
     setConfirm({
       title: 'Restore this version?',
       body: `The ${label} saved ${formatWhen(version.updatedAt)} goes live again${
-        dirty ? ', and your unpublished edits here are discarded' : ''
+        dirty
+          ? ', and your unpublished edits here are discarded'
+          : draftDeferred
+            ? ', and the unpublished draft saved on this device is discarded'
+            : ''
       }. It shows up on the site moments later.`,
       confirmLabel: 'Restore',
       tone: 'danger',
@@ -468,10 +544,13 @@ export function useDocumentEditor<T extends object>(
   async function doRestore(version: VersionEntry) {
     setBusy(true);
     setStatus(null);
+    const discardsDeferredDraft = draftDeferred;
     const result = await restoreVersion(doc, version.key);
     if (result.kind === 'ok') {
-      // The restore replaces the working document, so the local draft goes with it.
-      clearDraft(doc);
+      // The restore replaces the working document. A deferred draft was named in the
+      // confirmation, so it goes now; this tab's own draft is cleared by the autosave's
+      // clean-state cleanup once the restored version loads.
+      if (discardsDeferredDraft) clearDraft(doc);
       setDraftDeferred(false);
       setVersionsReload((value) => value + 1);
       setServerIssues([]);
@@ -485,6 +564,7 @@ export function useDocumentEditor<T extends object>(
         dispatch({ type: 'load', document: reloaded.document });
         setMode(reloaded.source === 'blob' ? 'live' : 'seed');
         setLastSaved(reloaded.updatedAt);
+        setBaseVersion(reloaded.source === 'blob' ? (reloaded.updatedAt ?? undefined) : null);
         showStatus(
           result.revalidated
             ? { tone: 'success', text: RESTORED_LIVE }
@@ -503,15 +583,22 @@ export function useDocumentEditor<T extends object>(
       }
     } else if (result.kind === 'unauthorized') {
       showStatus({ tone: 'error', text: SIGN_IN_EXPIRED });
+    } else if (result.kind === 'conflict') {
+      // The server's sentence (another save landed mid-restore); a retry is safe.
+      showStatus({ tone: 'error', text: result.message });
     } else if (result.kind === 'invalid') {
       // These issues describe the snapshot, not the current document — sending them to the
-      // issues panel would focus the wrong fields, so they stay in the banner.
+      // issues panel would focus the wrong fields, so they stay in the banner, in the
+      // server's own words.
       showStatus({
         tone: 'error',
-        text: `That saved version can’t be restored — it no longer passes the content rules: ${result.issues
+        text: `That saved version can’t be restored: ${result.issues
           .map((issue) => issue.message)
-          .join(' ')}`,
+          .join(' ')} Pick another version.`,
       });
+    } else if (result.status === 422 && result.message) {
+      // The snapshot itself is damaged; the server's sentence says so and what to do.
+      showStatus({ tone: 'error', text: result.message });
     } else if (result.status === 404) {
       setVersionsReload((value) => value + 1);
       showStatus({
@@ -519,7 +606,15 @@ export function useDocumentEditor<T extends object>(
         text: 'That saved version is no longer on the server — the version list has been refreshed, so pick another.',
       });
     } else {
-      showStatus({ tone: 'error', text: 'The restore didn’t go through — try again in a moment.' });
+      // A server that answered with its own reason (a snapshot that no longer reads as a
+      // document) will say the same on every retry, so that message is final.
+      showStatus({
+        tone: 'error',
+        text:
+          result.status !== null && result.message
+            ? `That saved version can’t be restored: ${result.message} Pick another version.`
+            : failureText(result, 'The restore didn’t go through'),
+      });
     }
     setBusy(false);
   }
@@ -539,6 +634,7 @@ export function useDocumentEditor<T extends object>(
     mode,
     loadError,
     lastSaved,
+    baseVersion,
 
     present,
     applyEdit,
@@ -574,6 +670,8 @@ export function useDocumentEditor<T extends object>(
 
     draftPrompt,
     resumeDraft: () => {
+      // The resumed edits keep this load's base version: the prompt has already said when
+      // they started from an older one, so publishing them is the owner's informed choice.
       if (draftPrompt) dispatch({ type: 'resume', document: draftPrompt.document });
       setDraftDeferred(false);
       setDraftPrompt(null);

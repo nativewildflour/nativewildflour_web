@@ -53,13 +53,29 @@ export type LoadResult<T> =
 export type SaveResult =
   | { readonly kind: 'ok'; readonly updatedAt: string | null; readonly revalidated: boolean }
   | { readonly kind: 'invalid'; readonly issues: readonly CopyIssue[] }
+  /**
+   * HTTP 409: the stored document is not the one this save was based on — someone published
+   * from another tab or device, or a save raced this one. `message` is the server's sentence.
+   */
+  | { readonly kind: 'conflict'; readonly message: string }
   | { readonly kind: 'unauthorized' }
-  /** `status` is the HTTP status when there was a response, `null` when the fetch threw. */
-  | { readonly kind: 'failed'; readonly detail: string; readonly status: number | null };
+  /**
+   * `status` is the HTTP status when there was a response, `null` when the fetch threw.
+   * `message` is the server's own sentence when it wrote one (5xx included).
+   */
+  | {
+      readonly kind: 'failed';
+      readonly detail: string;
+      readonly status: number | null;
+      readonly message?: string;
+    };
 
 export interface VersionEntry {
   readonly key: string;
+  /** When this version's content was published — the right time to show the owner. */
   readonly updatedAt: string;
+  /** When a later save replaced it, if the server said. */
+  readonly replacedAt?: string;
 }
 
 export type VersionsResult =
@@ -77,6 +93,11 @@ export interface ImageRecord {
   readonly originalName: string;
   /** Documents whose saved content references this photo — the reason a delete is refused. */
   readonly usedBy: readonly DocumentKey[];
+  /**
+   * Documents whose saved versions (history) still hold this photo. A restore would put it
+   * back on the site, so a delete is refused for these too until the versions age out.
+   */
+  readonly inHistory: readonly DocumentKey[];
 }
 
 export type ImagesResult =
@@ -195,10 +216,26 @@ async function saveRequest(
   if (response.status === 401) return { kind: 'unauthorized' };
 
   const body = await readJson(response);
-  // 400 carries validation issues; 409 (the document changed underneath) and 413 (too large)
-  // answer in the same `{ ok: false, issues }` shape with path-less messages. All three
-  // surface as `invalid` so the message reaches the owner.
-  if (response.status === 400 || response.status === 409 || response.status === 413) {
+  // A 409 naming a field is about this document's content after all: a photo it shows was
+  // deleted while the save was in flight, and the save was rolled back. It goes to the issues
+  // panel, which focuses the photo field, rather than to the "reload" banner.
+  if (response.status === 409) {
+    const issues = toIssues(isRecord(body) ? body.issues : null);
+    if (issues.some((issue) => issue.path !== '')) return { kind: 'invalid', issues };
+  }
+  // Otherwise 409 means the stored document moved underneath this save.
+  if (response.status === 409) {
+    return {
+      kind: 'conflict',
+      message: messageFrom(
+        body,
+        'This page was changed somewhere else after you opened it — reload to see the newest version.',
+      ),
+    };
+  }
+  // 400 carries validation issues; 413 (too large) answers in the same `{ ok: false, issues }`
+  // shape with a path-less message. Both surface as `invalid` so the message reaches the owner.
+  if (response.status === 400 || response.status === 413) {
     const issues = toIssues(isRecord(body) ? body.issues : null);
     return {
       kind: 'invalid',
@@ -209,7 +246,11 @@ async function saveRequest(
     };
   }
   if (!response.ok || !isRecord(body) || body.ok !== true) {
-    return { kind: 'failed', detail: `HTTP ${response.status}`, status: response.status };
+    const issues = toIssues(isRecord(body) ? body.issues : null);
+    const message = issues[0]?.message;
+    return message === undefined
+      ? { kind: 'failed', detail: `HTTP ${response.status}`, status: response.status }
+      : { kind: 'failed', detail: `HTTP ${response.status}: ${message}`, status: response.status, message };
   }
   return {
     kind: 'ok',
@@ -225,12 +266,22 @@ function withoutUpdatedAt(document: object): Record<string, unknown> {
   return rest;
 }
 
-/** PUT the document. The server re-validates, snapshots, writes and asks the site to refresh. */
+/**
+ * PUT the document. The server re-validates, snapshots, writes and asks the site to refresh.
+ *
+ * `base` is the version this edit started from: the `updatedAt` the editor loaded, or `null`
+ * when it loaded the seed (nothing saved yet). The server answers 409 (`conflict`) when the
+ * stored document is no longer that version, instead of overwriting a newer publish. Leaving
+ * it out skips the check.
+ */
 export function publishDocument<T extends object>(
   doc: DocumentKey,
   document: T,
+  base?: string | null,
 ): Promise<SaveResult> {
-  return saveRequest(documentEndpoint(doc), 'PUT', { document: withoutUpdatedAt(document) });
+  const payload: Record<string, unknown> = { document: withoutUpdatedAt(document) };
+  if (base !== undefined) payload.baseUpdatedAt = base;
+  return saveRequest(documentEndpoint(doc), 'PUT', payload);
 }
 
 /** Restore a snapshot by key — the server runs the same pipeline as a publish. */
@@ -254,7 +305,11 @@ export async function loadVersions(doc: DocumentKey): Promise<VersionsResult> {
 
   const versions = raw.flatMap((entry): VersionEntry[] => {
     if (isRecord(entry) && typeof entry.key === 'string' && typeof entry.updatedAt === 'string') {
-      return [{ key: entry.key, updatedAt: entry.updatedAt }];
+      return [
+        typeof entry.replacedAt === 'string'
+          ? { key: entry.key, updatedAt: entry.updatedAt, replacedAt: entry.replacedAt }
+          : { key: entry.key, updatedAt: entry.updatedAt },
+      ];
     }
     return [];
   });
@@ -283,13 +338,18 @@ export async function loadRules(): Promise<ContentRules | null> {
       !isStringArray(placeholders) ||
       !isRecord(expectedHours) ||
       typeof expectedHours.opens !== 'string' ||
-      typeof expectedHours.closes !== 'string'
+      typeof expectedHours.closes !== 'string' ||
+      !isStringArray(expectedHours.days)
     ) {
       return null;
     }
     return {
       forbiddenWords,
-      expectedHours: { opens: expectedHours.opens, closes: expectedHours.closes },
+      expectedHours: {
+        opens: expectedHours.opens,
+        closes: expectedHours.closes,
+        days: expectedHours.days,
+      },
       placeholders,
     };
   } catch {
@@ -314,9 +374,10 @@ function toImageRecord(value: unknown): ImageRecord | null {
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   // `usedBy` is display data (“used on the home page”), and validating it against the key list
   // would mean importing the registry itself — the server writes these, so they are trusted.
-  const usedBy = (Array.isArray(value.usedBy) ? value.usedBy : []).filter(
-    (entry): entry is string => typeof entry === 'string',
-  ) as readonly DocumentKey[];
+  const keys = (list: unknown): readonly DocumentKey[] =>
+    (Array.isArray(list) ? list : []).filter(
+      (entry): entry is string => typeof entry === 'string',
+    ) as readonly DocumentKey[];
   return {
     id: value.id,
     width: numberFrom(value.width),
@@ -324,7 +385,8 @@ function toImageRecord(value: unknown): ImageRecord | null {
     bytes: numberFrom(value.bytes),
     uploadedAt: stringFrom(value.uploadedAt),
     originalName: stringFrom(value.originalName),
-    usedBy,
+    usedBy: keys(value.usedBy),
+    inHistory: keys(value.inHistory),
   };
 }
 
@@ -358,14 +420,20 @@ export async function listImages(): Promise<ImagesResult> {
 }
 
 /**
- * Upload one already-downscaled JPEG. The `Content-Type` header is deliberately unset: the
- * browser has to write the multipart boundary itself, and setting it by hand breaks the parse
- * on the other end. `width`/`height` travel alongside because the server never decodes the
- * image — they are what the pages render the photo at.
+ * Upload one already-downscaled JPEG, with its 800px copy when it has one. The `Content-Type`
+ * header is deliberately unset: the browser has to write the multipart boundary itself, and
+ * setting it by hand breaks the parse on the other end. `width`/`height` (and
+ * `smallWidth`/`smallHeight`) travel alongside because the server never decodes the image —
+ * they are what the pages render the photo at.
  */
 export async function uploadImage(
   file: Blob,
-  meta: { readonly width: number; readonly height: number; readonly name: string },
+  meta: {
+    readonly width: number;
+    readonly height: number;
+    readonly name: string;
+    readonly small: { readonly blob: Blob; readonly width: number; readonly height: number } | null;
+  },
 ): Promise<UploadResult> {
   const form = new FormData();
   if (meta.name === '') form.append('file', file);
@@ -373,6 +441,11 @@ export async function uploadImage(
   form.append('width', String(meta.width));
   form.append('height', String(meta.height));
   form.append('name', meta.name);
+  if (meta.small !== null) {
+    form.append('small', meta.small.blob, 'small.jpg');
+    form.append('smallWidth', String(meta.small.width));
+    form.append('smallHeight', String(meta.small.height));
+  }
 
   let response: Response;
   try {

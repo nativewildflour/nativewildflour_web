@@ -17,16 +17,26 @@
  * one thing worse than a refused photo is a refused photo with no explanation.
  */
 
+import { SMALL_IMAGE_WIDTH } from '@/lib/content/images';
+
 /** Longest edge of a stored photo, in pixels. Comfortably past any slot the site renders. */
 export const MAX_EDGE = 1600;
 
 /** Visibly indistinguishable from the original at these sizes, at a fraction of the bytes. */
 const QUALITY = 0.85;
 
-export interface ResizedImage {
+export interface EncodedImage {
   readonly blob: Blob;
   readonly width: number;
   readonly height: number;
+}
+
+export interface ResizedImage extends EncodedImage {
+  /**
+   * The `SMALL_IMAGE_WIDTH`-wide copy the public pages offer phones in `srcset`, made only
+   * when the stored photo is wider than that. Uploaded alongside the photo itself.
+   */
+  readonly small: EncodedImage | null;
 }
 
 export interface ResizeFailure {
@@ -108,8 +118,32 @@ function toJpeg(canvas: HTMLCanvasElement): Promise<Blob | null> {
   });
 }
 
+/** `source` drawn at `width` × `height` on a white ground and encoded, or `null`. */
+async function encode(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+): Promise<EncodedImage | null> {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (context === null) return null;
+
+  // JPEG has no transparency, and an unpainted canvas encodes as black — a picture with a
+  // see-through background would arrive with a black surround without this.
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(source, 0, 0, width, height);
+
+  const blob = await toJpeg(canvas);
+  if (blob === null || blob.size === 0) return null;
+  return { blob, width, height };
+}
+
 /**
- * One picture, shrunk to fit and encoded as JPEG, with the pixel size the document will store.
+ * One picture, shrunk to fit and encoded as JPEG, with the pixel size the document will store —
+ * plus, for a photo wider than `SMALL_IMAGE_WIDTH`, a copy exactly that wide.
  * A file smaller than the ceiling is re-encoded rather than passed through, so every stored
  * photo is a JPEG the endpoint will accept.
  */
@@ -122,21 +156,18 @@ export async function resizeImage(file: File): Promise<ResizeResult> {
       const width = Math.max(1, Math.round(source.width * scale));
       const height = Math.max(1, Math.round(source.height * scale));
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      if (context === null) return { error: NO_CANVAS };
+      const full = await encode(source.draw, width, height);
+      if (full === null) return { error: NO_CANVAS };
 
-      // JPEG has no transparency, and an unpainted canvas encodes as black — a picture with a
-      // see-through background would arrive with a black surround without this.
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, width, height);
-      context.drawImage(source.draw, 0, 0, width, height);
-
-      const blob = await toJpeg(canvas);
-      if (blob === null || blob.size === 0) return { error: NO_CANVAS };
-      return { blob, width, height };
+      // The small copy is drawn from the decoded original, not the stored photo, so it is one
+      // downscale away from the camera's pixels rather than two.
+      let small: EncodedImage | null = null;
+      if (width > SMALL_IMAGE_WIDTH) {
+        const smallHeight = Math.max(1, Math.round((height * SMALL_IMAGE_WIDTH) / width));
+        small = await encode(source.draw, SMALL_IMAGE_WIDTH, smallHeight);
+        if (small === null) return { error: NO_CANVAS };
+      }
+      return { ...full, small };
     } finally {
       source.release();
     }

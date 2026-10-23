@@ -14,20 +14,50 @@
  * usable document, so the editor can show the draft while refusing to publish it.
  *
  * Runs in the build, the admin client bundle and the Netlify Functions, so: no dependencies, no
- * Node APIs, no JSON imports, relative import specifiers only.
+ * Node APIs, no JSON imports, relative import specifiers only. (The one fact it reads,
+ * `SEASON_NOTE`, comes from `business.ts`, which imports nothing.)
  */
 
+import { SEASON_NOTE } from '../data/business';
 import { IMAGE_ID, MAX_IMAGE_DIMENSION } from './content/images';
 import type { ContentRules, CopyIssue, RuleChecks } from './copy-rules';
-import { SLUG, buildRuleChecks, describe, isBlank, isPlainObject, scanText } from './copy-rules';
+import {
+  SLUG,
+  buildRuleChecks,
+  describe,
+  isBlank,
+  isPlainObject,
+  scanId,
+  scanText,
+} from './copy-rules';
 
-/** A single-line or multi-line string. `optional` allows it to be blank, never absent. */
+/**
+ * A single-line or multi-line string.
+ *
+ * `optional` allows it to be blank AND absent: a stored document (or snapshot) saved before the
+ * field existed has no such key, and parsing fills it in as `''` instead of rejecting the whole
+ * document. That makes an optional text field the safe way to add a field to a spec that already
+ * has saved content. Every other kind is required and must be present — adding one breaks every
+ * stored document that predates it.
+ */
 export interface TextFieldSpec {
   readonly kind: 'text';
   readonly label: string;
   readonly hint?: string;
   readonly multiline?: boolean;
   readonly optional?: boolean;
+  /**
+   * The field fills in `{hours}` with the current opening hours wherever it renders (see
+   * `HOURS_TOKEN` in `copy-rules.ts`). The component that renders the field must expand it —
+   * today only the directions FAQ answers do. Not stored in documents, so adding or removing it
+   * never affects saved content.
+   */
+  readonly hoursToken?: boolean;
+  /**
+   * The same for `{season}` and `SEASON_NOTE` (see `SEASON_TOKEN` in `copy-rules.ts`) —
+   * today only the about page's "Made in Skagway" card text. Not stored either.
+   */
+  readonly seasonToken?: boolean;
 }
 
 /** Body copy: an array of paragraphs, each rendered as its own `<p>`. */
@@ -139,6 +169,8 @@ function structuralField(
 ): void {
   switch (field.kind) {
     case 'text': {
+      // An optional field may be missing altogether; `withOptionalFilled` supplies the blank.
+      if (value === undefined && field.optional === true) return;
       if (typeof value !== 'string') {
         issues.push({ path, message: `expected a string, got ${describe(value)}` });
       }
@@ -319,8 +351,13 @@ function copyField(
 ): void {
   switch (field.kind) {
     case 'text': {
-      const text = value as string;
-      scanText(text, path, issues, rules);
+      // A string after the structural walk — except an absent optional field in a value that
+      // was never filled (the menu's page wording is walked field by field), which reads as blank.
+      const text = typeof value === 'string' ? value : '';
+      scanText(text, path, issues, rules, {
+        hoursToken: field.hoursToken === true,
+        ...(field.seasonToken === true ? { seasonNote: SEASON_NOTE } : {}),
+      });
       if (field.optional !== true && isBlank(text)) {
         issues.push({ path, message: `"${field.label}" is empty — please fill it in.` });
       }
@@ -366,16 +403,22 @@ function copyField(
       const items = value as readonly Record<string, unknown>[];
       checkCount(items.length, path, field, issues);
       const slugField = field.slugField;
+      const itemFields: FieldMap =
+        slugField === undefined
+          ? field.item
+          : Object.fromEntries(Object.entries(field.item).filter(([key]) => key !== slugField));
       const seenSlugs = new Set<string>();
       items.forEach((item, index) => {
         const itemPath = `${path}[${index}]`;
-        copyFields(item, field.item, itemPath, issues, rules);
+        copyFields(item, itemFields, itemPath, issues, rules);
         if (slugField === undefined) return;
 
         // Slugs are React keys as well as anchors, so a duplicate silently swallows an item.
-        // The format itself is structural — see the list case in `structuralField`.
+        // The format itself is structural — see the list case in `structuralField`. A slug only
+        // ever renders as an attribute, so it gets the id scan rather than the copy scan.
         const slug = item[slugField];
         if (typeof slug !== 'string') return;
+        scanId(slug, `${itemPath}.${slugField}`, issues, rules);
         if (seenSlugs.has(slug)) {
           issues.push({
             path: `${itemPath}.${slugField}`,
@@ -426,10 +469,53 @@ export function fieldCopyIssues(
   return issues;
 }
 
+/** One field's value with every absent optional text field below it filled in as `''`. */
+function fillField(value: unknown, field: FieldSpec): unknown {
+  switch (field.kind) {
+    case 'text':
+      return value === undefined && field.optional === true ? '' : value;
+    case 'group':
+      return isPlainObject(value) ? fillFields(value, field.fields) : value;
+    case 'list': {
+      if (!Array.isArray(value)) return value;
+      const items = value as readonly unknown[];
+      const next = items.map((item) => (isPlainObject(item) ? fillFields(item, field.item) : item));
+      return next.some((item, index) => item !== items[index]) ? next : value;
+    }
+    default:
+      return value;
+  }
+}
+
+/**
+ * One object level with its absent optional fields filled; other keys kept as-is. Returns the
+ * same object when nothing needed filling, so a complete document keeps its identity.
+ */
+function fillFields(owner: Record<string, unknown>, fields: FieldMap): Record<string, unknown> {
+  let filled: Record<string, unknown> | null = null;
+  for (const [key, field] of Object.entries(fields)) {
+    const next = fillField(owner[key], field);
+    if (next !== owner[key]) {
+      filled ??= { ...owner };
+      filled[key] = next;
+    }
+  }
+  return filled ?? owner;
+}
+
+/**
+ * A structurally valid document with every absent optional field present, so the pages, the
+ * editor and the copy checks all see the full shape. Never mutates its input — that may be a
+ * JSON module or React state — and copies only the levels that change.
+ */
+function withOptionalFilled(value: unknown, spec: DocumentSpec): unknown {
+  return isPlainObject(value) ? fillFields(value, spec.fields) : value;
+}
+
 /**
  * Structural validation only — the build-time entry point, mirroring `parseMenuContent`. A
  * document that survives this can render; whether its *copy* is publishable is a separate
- * question the publish endpoint answers.
+ * question the publish endpoint answers. Absent optional fields come back filled in.
  */
 export function parseWithSpec<T>(
   value: unknown,
@@ -442,7 +528,7 @@ export function parseWithSpec<T>(
       errors: issues.map((issue) => (issue.path === '' ? issue.message : `${issue.path}: ${issue.message}`)),
     };
   }
-  return { document: value as T, errors: [] };
+  return { document: withOptionalFilled(value, spec) as T, errors: [] };
 }
 
 /**
@@ -460,9 +546,10 @@ export function validateWithSpec<T>(
   if (structural.length > 0) {
     return { document: null, issues: structural };
   }
-  const document = value as T;
+  const filled = withOptionalFilled(value, spec) as Record<string, unknown>;
+  const document = filled as T;
   const issues: CopyIssue[] = [];
-  copyFields(value as Record<string, unknown>, spec.fields, '', issues, rules === null ? null : buildRuleChecks(rules));
+  copyFields(filled, spec.fields, '', issues, rules === null ? null : buildRuleChecks(rules));
   if (extra) issues.push(...extra(document));
   return { document, issues };
 }

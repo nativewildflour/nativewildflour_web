@@ -40,10 +40,17 @@ export default async function adminAuth(
   }
 
   // Authenticated: serve the page (or API response), but keep everything under /admin out
-  // of caches and search indexes even where the netlify.toml header rules are not applied.
+  // of shared caches and search indexes even where the netlify.toml header rules are not
+  // applied. A response that already marks itself `private` keeps its own policy: the photo
+  // endpoint lets the signed-in browser keep each (immutable) picture, which `no-store` would
+  // undo, while a `private` copy never reaches the CDN. Everything else — Next's pages send a
+  // public-cacheable header of their own — is forced to `no-store`.
   const response = await context.next();
   const headers = new Headers(response.headers);
-  headers.set('Cache-Control', 'no-store');
+  const cacheControl = headers.get('Cache-Control') ?? '';
+  if (!/(^|,)\s*private\b/i.test(cacheControl)) {
+    headers.set('Cache-Control', 'no-store');
+  }
   headers.set('X-Robots-Tag', 'noindex, nofollow');
   return new Response(response.body, {
     status: response.status,

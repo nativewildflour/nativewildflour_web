@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Fragment } from 'react';
 
 import { Container } from '@/components/Container';
 import { FireweedSprig, RidgeDivider } from '@/components/Decor';
@@ -83,13 +84,15 @@ export function SiteFooter() {
           <div className="flex flex-col gap-3 border-t border-snow/15 py-6 sm:flex-row sm:items-center sm:justify-between">
             <p className="flex items-center gap-2 font-display text-xl font-black tracking-wide text-wheat">
               <FireweedSprig className="h-7 w-5 shrink-0" />
-              {/* Wrap between phrases, never inside one ("Made / to Go"). */}
-              <span>
+              {/* Wrap between phrases, never inside one ("Made / to Go"). The separators sit
+                  outside the nowrap spans: a non-breaking space glues each bullet to the phrase
+                  before it, and the plain space after the bullet is where a line may break. */}
+              <span className="min-w-0">
                 {MOTTO.split(' • ').map((phrase, index) => (
-                  <span key={phrase} className="whitespace-nowrap">
-                    {index > 0 ? ' • ' : ''}
-                    {phrase}
-                  </span>
+                  <Fragment key={phrase}>
+                    {index > 0 ? <>&nbsp;• </> : null}
+                    <span className="whitespace-nowrap">{phrase}</span>
+                  </Fragment>
                 ))}
               </span>
             </p>

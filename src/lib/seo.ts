@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 
-import { BUSINESS_NAME } from '@/data/business';
+import { BUSINESS_NAME, COFFEE_ROASTER } from '@/data/business';
 import {
   OG_IMAGE_HEIGHT,
   OG_IMAGE_URL,
@@ -27,7 +27,7 @@ export const DEFAULT_TITLE =
 
 /** Home page meta description (≤ 155 characters). */
 export const DEFAULT_DESCRIPTION =
-  'Fresh-fried Alaskan bannock from a family recipe, house-baked goods and Kaladi Brothers coffee in downtown Skagway, Alaska — steps from the docks.';
+  `Fresh-fried Alaskan bannock from a family recipe, house-baked goods and ${COFFEE_ROASTER} in downtown Skagway, Alaska — steps from the docks.`;
 
 export interface BuildMetadataOptions {
   /** Page title. Gets ` | Native WILDFlour` appended unless `absoluteTitle` is true. */

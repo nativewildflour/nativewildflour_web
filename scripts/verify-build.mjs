@@ -32,10 +32,10 @@
 
 import { spawn } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, register } from 'node:module';
 import net from 'node:net';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NEXT_DIR = path.join(ROOT, '.next');
@@ -54,8 +54,6 @@ const PHONE_E164 = '+19076120002';
 const PHONE_HREF = `tel:${PHONE_E164}`;
 /** JSON-LD must publish the same string the pages render — docs/BRIEF.md §5. */
 const SCHEMA_TELEPHONE = PHONE_DISPLAY;
-const OPEN_DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-const CLOSED_DAY = 'Saturday';
 /**
  * Whether this build may be indexed — the same variable, parsed the same way, as
  * `SITE_INDEXABLE` in src/lib/site.ts. The build inlines it, so a gate run with a different
@@ -104,22 +102,75 @@ if (!Array.isArray(PLACEHOLDERS) || PLACEHOLDERS.length === 0) {
   process.exit(1);
 }
 
-const FORBIDDEN_PATTERNS = FORBIDDEN_WORDS.map((word) => ({
-  word,
-  // Separator-tolerant: a space or hyphen in the rule also matches the joined spelling and
-  // the other common separators ("pop-up" catches "popup", "612-0303" catches "6120303"
-  // and the dot-formatted "612.0303" that phone listings favour).
-  pattern: new RegExp(
-    `\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[ -]/g, '[\\s.-]?')}s?\\b`,
-    'i',
-  ),
-}));
+/** The open days (spelled out); every other day of the week is a closed day. */
+const OPEN_DAYS = CONTENT_RULES.expectedHours?.days;
+if (!Array.isArray(OPEN_DAYS) || OPEN_DAYS.length === 0) {
+  console.error(
+    'src/data/content-rules.json must provide a non-empty `expectedHours.days` array — without it the open-day checks compare against nothing.',
+  );
+  process.exit(1);
+}
 
 /**
- * Wrong brand casing: any standalone "wildflour" token whose casing is not exactly
- * `WILDFlour`. Word boundaries keep `nativewildflour` (the domain) exempt.
+ * The copy-rule engine itself — `src/lib/copy-rules.ts`, the module the publish validator and
+ * the editors run — loaded here rather than restated, so the gate and the validator cannot
+ * drift (CLAUDE.md: "never fork it"). The module imports nothing and uses only erasable
+ * TypeScript, so Node loads it with types stripped (the npm script passes
+ * `--experimental-strip-types` for the Node 22 the deploy pins). `business.ts` is loaded the
+ * same way for the facts the rules must agree with.
  */
-const WRONG_CASING = /\b(?!WILDFlour\b)[Ww][Ii][Ll][Dd][Ff][Ll][Oo][Uu][Rr]\b/;
+const copyRules = await import(pathToFileURL(path.join(ROOT, 'src', 'lib', 'copy-rules.ts')).href);
+const business = await import(pathToFileURL(path.join(ROOT, 'src', 'data', 'business.ts')).href);
+
+/**
+ * `menu-content.ts` is loaded for one constant it restates from the default menu. Unlike the two
+ * modules above it imports siblings, by extensionless relative specifiers (the function bundler
+ * and Next fill the extension in), so a resolve hook does the same here — the relative branch of
+ * the hook in `scripts/smoke-admin.mjs`, and nothing else.
+ */
+const RESOLVE_TS = `
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+export async function resolve(specifier, context, nextResolve) {
+  if ((specifier.startsWith('./') || specifier.startsWith('../')) && context.parentURL) {
+    const direct = new URL(specifier, context.parentURL);
+    if (!existsSync(fileURLToPath(direct))) {
+      for (const extension of ['.ts', '/index.ts']) {
+        const candidate = new URL(direct.href + extension);
+        if (existsSync(fileURLToPath(candidate))) return nextResolve(candidate.href, context);
+      }
+    }
+  }
+  return nextResolve(specifier, context);
+}
+`;
+register(`data:text/javascript,${encodeURIComponent(RESOLVE_TS)}`);
+const menuContent = await import(pathToFileURL(path.join(ROOT, 'src', 'lib', 'menu-content.ts')).href);
+const {
+  WRONG_CASING,
+  PHONE_LIKE,
+  CONTENT_TOKENS,
+  SEASON_TOKEN,
+  findForbidden,
+  findHoursProblems,
+  findHoursRanges,
+  normalizeCopy,
+} = copyRules;
+/** The compiled rules — the same object the publish validator builds from the same JSON. */
+const CHECKS = copyRules.buildRuleChecks(CONTENT_RULES);
+const CLOSED_DAYS = business.WEEKDAYS.filter((day) => !OPEN_DAYS.includes(day));
+
+/**
+ * The security headers every page response must carry. next.config.ts `headers()` sets them for
+ * everything the Next server renders (on Netlify, netlify.toml's [[headers]] reach only static
+ * files); `next start` applies that config, so this run sees exactly what a visitor gets.
+ */
+const SECURITY_HEADERS = {
+  'x-frame-options': (value) => value === 'SAMEORIGIN',
+  'x-content-type-options': (value) => value === 'nosniff',
+  'referrer-policy': (value) => value !== null && value.trim() !== '',
+  'permissions-policy': (value) => value !== null && value.trim() !== '',
+};
 
 /**
  * The route registry: every page the site serves, and the single place routes are enumerated.
@@ -418,15 +469,6 @@ function stopServer(child) {
 const documents = [];
 
 /**
- * `9:00 AM` / `4 PM` -> 24-hour `HH:MM`, so rendered hours can be compared to the spec.
- */
-function to24Hour(hour, minute, suffix) {
-  const base = Number(hour) % 12;
-  const hours = /pm/i.test(suffix) ? base + 12 : base;
-  return `${String(hours).padStart(2, '0')}:${(minute ?? '00').padStart(2, '0')}`;
-}
-
-/**
  * Rendered copy only: `<script>` and `<style>` blocks removed. This drops Next's RSC flight
  * payload (which legitimately contains `$undefined`) and every chunk path in a `<script src>`
  * — including bundle filenames derived from the `MobileNav` component identifier, which
@@ -439,15 +481,16 @@ function renderedText(html) {
 }
 
 /**
- * Every `.ts`/`.tsx`/`.css` file under `src/`. BRIEF §5 requires the forbidden-word scan to
- * cover the sources too, not just what the pages happen to render this build.
+ * Every script and stylesheet source under a directory (`src/`, `netlify/`): `.ts`, `.tsx`,
+ * `.mts`, `.mjs`, `.js`, `.css`. BRIEF §5 requires the forbidden-word scan to cover the sources
+ * too, not just what the pages happen to render this build.
  */
 async function collectSourceFiles(dir, acc = []) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       await collectSourceFiles(full, acc);
-    } else if (/\.(ts|tsx|css)$/i.test(entry.name)) {
+    } else if (/\.(ts|tsx|mts|mjs|js|css)$/i.test(entry.name)) {
       acc.push(full);
     }
   }
@@ -514,13 +557,97 @@ function collectTypes(value, found = new Set()) {
   return found;
 }
 
-function scanForbidden(text, label, sink) {
-  for (const { word, pattern } of FORBIDDEN_PATTERNS) {
-    const match = text.match(pattern);
-    if (match) sink.push(`${label}: forbidden word "${match[0]}" (rule: ${word})`);
+/**
+ * Banned vocabulary (always) and wrong brand casing (unless `casing: false`), through the shared
+ * engine — which normalizes dashes, no-break spaces and invisible characters first. Casing is a
+ * rule about how the name *reads*, so callers turn it off for text that includes attribute
+ * values (ids, hrefs, class names), where a lowercase slug such as `wildflour-specials` is fine.
+ */
+function scanForbidden(text, label, sink, { casing = true } = {}) {
+  for (const { word, found } of findForbidden(text, CHECKS)) {
+    sink.push(`${label}: forbidden word "${found}" (rule: ${word})`);
   }
-  const casing = text.match(WRONG_CASING);
-  if (casing) sink.push(`${label}: wrong brand casing "${casing[0]}" — must be ${BRAND}`);
+  if (!casing) return;
+  const wrong = normalizeCopy(text).match(WRONG_CASING);
+  if (wrong) sink.push(`${label}: wrong brand casing "${wrong[0]}" — must be ${BRAND}`);
+}
+
+/** The handful of entities React and Next emit, plus every numeric form. */
+function decodeEntities(text) {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/** Elements that end a line of text; everything else is inline and joins its neighbours. */
+const BLOCK_TAG = new RegExp(
+  '</?(?:address|article|aside|blockquote|br|button|caption|dd|details|div|dl|dt|figcaption|figure|footer|form|h[1-6]|header|hr|label|li|main|nav|ol|option|p|section|summary|table|tbody|td|tfoot|th|thead|title|tr|ul)\\b[^>]*>',
+  'gi',
+);
+
+/**
+ * What a reader sees: scripts, styles and comments dropped, block boundaries as line breaks
+ * (the hours matchers treat a line as a sentence), inline tags as spaces, entities decoded — so
+ * `Closed</span> <span>Saturday` reads as one phrase and `&#8209;` as the hyphen it draws.
+ */
+function visibleText(html) {
+  return decodeEntities(
+    renderedText(html)
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(BLOCK_TAG, '\n')
+      .replace(/<[^>]+>/g, ' '),
+  );
+}
+
+/** Attribute values people read or hear: alt text, titles, labels, meta content. */
+function attributeText(html) {
+  const values = [];
+  for (const match of renderedText(html).matchAll(
+    /\s(?:alt|title|aria-label|placeholder|content)="([^"]*)"/gi,
+  )) {
+    values.push(decodeEntities(match[1] ?? ''));
+  }
+  return values.join('\n');
+}
+
+/**
+ * The inline RSC flight payload — the `self.__next_f.push([1,"…"])` scripts that carry the page
+ * again for client navigation. Each string is JSON-decoded first, so escaped characters read as
+ * what they are. Chunk paths (`/_next/static/…`, whose hashes can spell anything) and the
+ * exempt `MobileNav` identifier are dropped. Returns the decoded text and how many pushes were
+ * found, so a format change that empties the scan fails loudly instead of passing.
+ */
+function flightPayload(html) {
+  const parts = [];
+  for (const [, body] of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) {
+    for (const match of body.matchAll(/self\.__next_f\.push\(\[\d+,("(?:[^"\\]|\\.)*")\]\)/g)) {
+      try {
+        parts.push(JSON.parse(match[1]));
+      } catch {
+        parts.push(match[1]);
+      }
+    }
+  }
+  const text = parts
+    .join('\n')
+    .replace(/\/_next\/static\/[^\s"'\])},]*/g, ' ')
+    .split('MobileNav')
+    .join(' ');
+  return { text, count: parts.length };
+}
+
+/** Every string value anywhere in a parsed JSON tree. */
+function jsonStrings(value, acc = []) {
+  if (typeof value === 'string') acc.push(value);
+  else if (Array.isArray(value)) for (const item of value) jsonStrings(item, acc);
+  else if (value && typeof value === 'object') for (const item of Object.values(value)) jsonStrings(item, acc);
+  return acc;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,10 +655,10 @@ function scanForbidden(text, label, sink) {
 // ---------------------------------------------------------------------------
 
 async function runChecks(base) {
-  /** GET a route and hand back its status and body. */
+  /** GET a route and hand back its status, headers and body. */
   async function get(route) {
     const response = await fetch(`${base}${route}`);
-    return { status: response.status, body: await response.text() };
+    return { status: response.status, headers: response.headers, body: await response.text() };
   }
 
   /**
@@ -574,6 +701,34 @@ async function runChecks(base) {
       `${route} is a page in this build with no PAGES entry in this script — add it here (and to src/app/sitemap.ts if it is indexable)`,
     );
   }
+  // The same comparison for concrete URLs. A dynamic page (`/admin/preview/[doc]`) is one
+  // manifest pattern serving several URLs, so the pattern check above passes as long as any one
+  // of them is registered; the prerender manifest names each URL the build actually produced.
+  let prerender = { routes: {} };
+  try {
+    prerender = JSON.parse(await readFile(path.join(NEXT_DIR, 'prerender-manifest.json'), 'utf8'));
+  } catch (error) {
+    check(false, `cannot read .next/prerender-manifest.json: ${error}`);
+  }
+  const pagePatterns = new Set(builtRoutes);
+  const concreteUrls = Object.entries(prerender.routes ?? {})
+    .filter(([url, entry]) => pagePatterns.has(entry?.srcRoute ?? url) && url !== '/_not-found')
+    .map(([url]) => (url === '/' ? '/' : `${url}/`));
+  check(concreteUrls.length > 0, '.next/prerender-manifest.json lists no page URLs');
+  const registeredUrls = new Set(PAGES.map((page) => page.route));
+  for (const url of concreteUrls) {
+    check(
+      registeredUrls.has(url),
+      `${url} is a page URL in this build with no PAGES entry in this script — add it here (and to src/app/sitemap.ts if it is indexable)`,
+    );
+  }
+  for (const page of PAGES) {
+    if (page.status === 404) continue;
+    check(
+      concreteUrls.includes(page.route),
+      `PAGES registers ${page.route}, which this build does not prerender — remove the entry, or restore the page`,
+    );
+  }
   for (const route of registeredRoutes) {
     check(
       builtRoutes.includes(route),
@@ -611,6 +766,17 @@ async function runChecks(base) {
         response.status === expected,
         `GET ${page.route} answered ${response.status}, expected ${expected}`,
       );
+      // Every page response, public or admin, 200 or 404: next.config.ts headers().
+      for (const [name, valid] of Object.entries(SECURITY_HEADERS)) {
+        const value = response.headers.get(name);
+        check(valid(value), `response header ${name} is ${JSON.stringify(value)}`);
+      }
+      if (page.route.startsWith('/admin/')) {
+        check(
+          /no-store/i.test(response.headers.get('cache-control') ?? ''),
+          `admin page answered Cache-Control ${JSON.stringify(response.headers.get('cache-control'))}, expected no-store`,
+        );
+      }
     } catch (error) {
       check(false, `cannot fetch ${page.route}: ${error}`);
       continue;
@@ -700,9 +866,23 @@ async function runChecks(base) {
     // Template-bug markers, in rendered copy only. The public pages render owner-editable
     // content, so this exact check (case-sensitive substring) must also exist in the publish
     // validator — drift here would wedge every deploy after a clean publish.
+    // JSON-LD is checked from its parsed string values (the FAQ answers are owner text too):
+    // `renderedText` drops every script, structured data included.
     const text = renderedText(html);
+    const schemaStrings = jsonStrings(nodes);
     for (const marker of PLACEHOLDERS) {
       check(!text.includes(marker), `rendered copy contains "${marker}"`);
+      for (const value of schemaStrings) {
+        check(!value.includes(marker), `JSON-LD contains "${marker}": ${JSON.stringify(value)}`);
+      }
+    }
+    // A `{hours}` or `{season}` token the render forgot to fill in prints literally.
+    for (const { token, pattern } of CONTENT_TOKENS) {
+      const unexpanded = new RegExp(pattern.source, 'i');
+      check(!unexpanded.test(text), `rendered copy contains an unexpanded ${token}`);
+      for (const value of schemaStrings) {
+        check(!unexpanded.test(value), `JSON-LD contains an unexpanded ${token}: ${JSON.stringify(value)}`);
+      }
     }
 
     loaded.set(page.route, { html, jsonLd: nodes });
@@ -740,10 +920,12 @@ async function runChecks(base) {
     const covered = new Set();
     for (const spec of specs) {
       const days = Array.isArray(spec.dayOfWeek) ? spec.dayOfWeek : [spec.dayOfWeek];
-      check(
-        !days.includes(CLOSED_DAY),
-        `openingHoursSpecification lists ${CLOSED_DAY}, which is a closed day`,
-      );
+      for (const closedDay of CLOSED_DAYS) {
+        check(
+          !days.includes(closedDay),
+          `openingHoursSpecification lists ${closedDay}, which is a closed day`,
+        );
+      }
       check(spec.opens === OPENS, `opens is "${spec.opens}", expected "${OPENS}"`);
       check(spec.closes === CLOSES, `closes is "${spec.closes}", expected "${CLOSES}"`);
       for (const day of days) covered.add(day);
@@ -824,11 +1006,27 @@ async function runChecks(base) {
   group('forbidden words');
   for (const { label, contents, html } of documents) {
     if (html) {
-      scanForbidden(renderedText(contents), label, current.failures);
+      // The markup with its attributes (ids, hrefs, classes): banned words only — a lowercase
+      // slug like `menu--wildflour-specials` is not a casing mistake. What people read or hear
+      // — the visible text and the alt/title/label/meta attributes — gets the casing rule too.
+      scanForbidden(renderedText(contents), label, current.failures, { casing: false });
+      scanForbidden(visibleText(contents), `${label} (text)`, current.failures);
+      scanForbidden(attributeText(contents), `${label} (attributes)`, current.failures);
       // JSON-LD is stripped along with the other scripts, so scan it from the parsed objects.
       const { nodes } = parseJsonLd(contents);
       if (nodes.length > 0) {
-        scanForbidden(JSON.stringify(nodes), `${label} (JSON-LD)`, current.failures);
+        scanForbidden(jsonStrings(nodes).join('\n'), `${label} (JSON-LD)`, current.failures);
+      }
+      // The RSC flight payload repeats the page for client navigation. Banned words and the
+      // wrong number only: it legitimately carries `$undefined` and lowercase slugs.
+      const flight = flightPayload(contents);
+      check(flight.count > 0, `${label}: no inline RSC payload found — the flight scan read nothing`);
+      scanForbidden(flight.text, `${label} (RSC payload)`, current.failures, { casing: false });
+      for (const match of normalizeCopy(flight.text).matchAll(/\(?907\)?[\s.-]?612[\s.-]?\d{4}/g)) {
+        check(
+          match[0].replace(/\D/g, '').endsWith('0002'),
+          `${label} (RSC payload): phone digits "${match[0]}" are not the real 907-612-0002`,
+        );
       }
     } else {
       // sitemap.xml / robots.txt / manifest.webmanifest — copy, scanned whole.
@@ -837,11 +1035,14 @@ async function runChecks(base) {
   }
 
   // --- Forbidden words, the sources ----------------------------------------
-  // BRIEF §5 scans `src/`, the rendered site and `README.md`. `docs/` is deliberately excluded:
-  // BRIEF.md is the rule book and necessarily spells every banned word out.
+  // BRIEF §5 scans `src/`, the rendered site and `README.md`; `netlify/` (the functions, the
+  // edge guard, the build plugin) is scanned too, since its responses reach the owner. `docs/`
+  // is deliberately excluded: BRIEF.md is the rule book and necessarily spells every banned word
+  // out. `content-rules.json` is not a script source, so it is never collected.
   group('forbidden words: source');
   const sourceFiles = [
     ...(await collectSourceFiles(path.join(ROOT, 'src'))),
+    ...(await collectSourceFiles(path.join(ROOT, 'netlify'))),
     path.join(ROOT, 'README.md'),
   ];
   for (const file of sourceFiles) {
@@ -893,12 +1094,11 @@ async function runChecks(base) {
       check(text.includes(PHONE_DISPLAY), `${label}: does not render "${PHONE_DISPLAY}"`);
       check(entry.html.includes(PHONE_HREF), `${label}: no ${PHONE_HREF} link`);
     }
-    // Any other rendering of a 907-612 number is wrong. Drop the (correct) `tel:` hrefs first,
-    // otherwise `tel:+19076120002` reads as an unformatted number. Only the full href is
-    // removed: splitting on the bare E.164 string too would also erase a visibly rendered
-    // `+19076120002` — exactly the mistake this check exists to catch.
-    const humanText = text.split(PHONE_HREF).join(' ');
-    const wrongFormat = humanText.match(/\(?907\)?[\s.-]?612[\s.-]?\d{4}/g) ?? [];
+    // Any other rendering of a 907-612 number is wrong — a visibly printed `+19076120002`
+    // included. Read from what people see (normalized, so a no-break hyphen can't hide a wrong number),
+    // which leaves the `tel:` hrefs out by construction.
+    const humanText = normalizeCopy(`${visibleText(entry.html)}\n${attributeText(entry.html)}`);
+    const wrongFormat = humanText.match(PHONE_LIKE) ?? [];
     for (const found of wrongFormat) {
       check(
         found === '907-612-0002',
@@ -909,37 +1109,94 @@ async function runChecks(base) {
 
   // --- Hours ----------------------------------------------------------------
   // The other half of "phone + hours must match the rendered copy": every opening-hours
-  // range a page actually prints is parsed and compared to the spec, so a hand-edited
-  // display string cannot contradict the table and the JSON-LD it sits beside.
-  // The public pages render owner-editable content, so this exact check (same range regex,
-  // same 24-hour conversion) must also exist in the publish validator — drift here would wedge
-  // every deploy after a clean publish, with the blob feeding the bad copy into each render.
+  // statement a page prints is read by the same engine the publish validator runs
+  // (`findHoursRanges` / `findHoursProblems` from src/lib/copy-rules.ts) — time ranges in any
+  // spelling, opening and closing times, day ranges, closed days named as open, "open daily"
+  // claims — so a hand-edited display string cannot contradict the table and the JSON-LD it
+  // sits beside, and a clean publish can never fail here.
   group('hours');
-  const HOURS_RANGE =
-    /\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*(?:–|—|-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/gi;
   for (const page of PAGES) {
     const entry = loaded.get(page.route);
     if (!entry) continue;
     // Admin pages render no opening-hours copy, by design.
     if (page.copy === false) continue;
     const label = page.route;
-    const text = renderedText(entry.html);
-    const ranges = [...text.matchAll(HOURS_RANGE)];
+    const text = visibleText(entry.html);
+    const ranges = findHoursRanges(text);
     check(ranges.length > 0, `${label}: renders no opening-hours range`);
-    for (const [found, openHour, openMinute, openSuffix, closeHour, closeMinute, closeSuffix] of ranges) {
-      const opens = to24Hour(openHour, openMinute, openSuffix);
-      const closes = to24Hour(closeHour, closeMinute, closeSuffix);
+    for (const range of ranges) {
       check(
-        opens === OPENS && closes === CLOSES,
-        `${label}: renders hours "${found}" (${opens}–${closes}), expected ${OPENS}–${CLOSES}`,
+        range.opens === OPENS && range.closes === CLOSES,
+        `${label}: renders hours "${range.found}" (${range.opens}–${range.closes}), expected ${OPENS}–${CLOSES}`,
       );
     }
-    // The closed day must be named as closed wherever the week is listed.
-    check(
-      !text.includes(CLOSED_DAY) || /Closed/.test(text),
-      `${label}: names ${CLOSED_DAY} without marking it closed`,
+    for (const problem of findHoursProblems(text, CHECKS)) {
+      check(false, `${label}: "${problem.found}" contradicts the opening hours (${CHECKS.hoursDisplay})`);
+    }
+    // Every page lists the week in the footer's hours table: each closed day's row must say
+    // Closed, and each open day's row the real range — so a row can't drift from the rules.
+    const rows = new Map(
+      [...entry.html.matchAll(/<th[^>]*>\s*([A-Za-z]+day)\s*<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map(
+        (match) => [match[1], normalizeCopy(decodeEntities(match[2].replace(/<[^>]+>/g, ''))).trim()],
+      ),
     );
+    check(rows.size >= 7, `${label}: no full-week hours table found (${rows.size} day rows)`);
+    for (const day of CLOSED_DAYS) {
+      check(rows.get(day) === 'Closed', `${label}: the ${day} row reads "${rows.get(day)}", expected "Closed"`);
+    }
+    for (const day of OPEN_DAYS) {
+      const [range] = findHoursRanges(rows.get(day) ?? '');
+      check(
+        range !== undefined && range.opens === OPENS && range.closes === CLOSES,
+        `${label}: the ${day} row reads "${rows.get(day)}", expected ${OPENS}–${CLOSES}`,
+      );
+    }
   }
+
+  // --- The rules agree with the facts ----------------------------------------
+  // content-rules.json restates the hours for the validator (which may not import business.ts
+  // into a client bundle's reach); the two must say the same thing, or the gate and the editors
+  // would enforce hours the pages don't show.
+  group('rules ↔ business.ts');
+  const factDays = new Set();
+  for (const spec of business.OPENING_HOURS) {
+    check(spec.opens === OPENS, `OPENING_HOURS opens at ${spec.opens}, content-rules.json says ${OPENS}`);
+    check(spec.closes === CLOSES, `OPENING_HOURS closes at ${spec.closes}, content-rules.json says ${CLOSES}`);
+    for (const day of spec.dayOfWeek) factDays.add(day);
+  }
+  check(
+    [...factDays].sort().join() === [...OPEN_DAYS].sort().join(),
+    `OPENING_HOURS opens on ${[...factDays].join(', ')}, content-rules.json expectedHours.days says ${OPEN_DAYS.join(', ')}`,
+  );
+
+  // --- Defaults that restate a fact ------------------------------------------
+  // The about page's season card fills SEASON_NOTE in through the {season} token instead of
+  // freezing a copy of it, and the page must really print the note in its place (nothing else
+  // on /about/ renders it). The validator restates the default menu's specials lead, to scan a
+  // page-less menu's specials paragraph as printed; the two must be the same words.
+  group('defaults ↔ business.ts');
+  const aboutDefault = JSON.parse(
+    await readFile(path.join(ROOT, 'src', 'data', 'defaults', 'about.json'), 'utf8'),
+  );
+  const seasonToken = CONTENT_TOKENS.find((entry) => entry.token === SEASON_TOKEN);
+  const usesSeason = new RegExp(seasonToken.pattern.source, 'i');
+  check(
+    (aboutDefault.madeInSkagway?.cards ?? []).some((card) => usesSeason.test(card.body ?? '')),
+    `no card in the about default's madeInSkagway.cards uses ${SEASON_TOKEN} — the season card must fill SEASON_NOTE in, not copy it`,
+  );
+  const aboutPage = loaded.get('/about/');
+  check(
+    aboutPage !== undefined &&
+      normalizeCopy(decodeEntities(renderedText(aboutPage.html))).includes(normalizeCopy(business.SEASON_NOTE)),
+    `/about/ does not render SEASON_NOTE ("${business.SEASON_NOTE}") — the ${SEASON_TOKEN} card was not filled in`,
+  );
+  const menuDefault = JSON.parse(
+    await readFile(path.join(ROOT, 'src', 'data', 'defaults', 'menu.json'), 'utf8'),
+  );
+  check(
+    menuDefault.page?.specialsLead === menuContent.DEFAULT_SPECIALS_LEAD,
+    `DEFAULT_SPECIALS_LEAD in src/lib/menu-content.ts is "${menuContent.DEFAULT_SPECIALS_LEAD}", but the menu default's page.specialsLead is "${menuDefault.page?.specialsLead}"`,
+  );
 }
 
 // ---------------------------------------------------------------------------

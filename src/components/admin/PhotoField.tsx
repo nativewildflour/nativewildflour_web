@@ -92,6 +92,7 @@ export function PhotoField({
       width: prepared.width,
       height: prepared.height,
       name: file.name,
+      small: prepared.small,
     });
     setProgress('idle');
 

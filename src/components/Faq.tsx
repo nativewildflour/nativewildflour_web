@@ -18,7 +18,7 @@ export function Faq({ items, className = '' }: FaqProps) {
       {items.map((item, index) => (
         <details key={index} className="group py-4">
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 font-display text-lg font-bold text-bark transition-colors duration-200 marker:content-none hover:text-blueberry">
-            <span>{item.question}</span>
+            <span className="min-w-0">{item.question}</span>
             <span
               aria-hidden="true"
               className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sky/50 text-xl leading-none text-blueberry transition-transform duration-200 group-open:rotate-45"

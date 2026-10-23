@@ -1,3 +1,4 @@
+import { BrandText } from '@/components/BrandText';
 import { ButtonLink } from '@/components/ButtonLink';
 import { ChipList } from '@/components/ChipList';
 import { Section } from '@/components/Section';
@@ -16,7 +17,7 @@ export function AboutRecipe({ content, toppings }: AboutRecipeProps) {
       <p className="max-w-2xl text-bark/85">{content.intro}</p>
 
       <h3 className="mt-8 text-sm font-bold tracking-wide text-bark/70 uppercase">
-        {content.toppingsHeading}
+        <BrandText text={content.toppingsHeading} />
       </h3>
       <ChipList items={toppings} className="mt-3" />
 

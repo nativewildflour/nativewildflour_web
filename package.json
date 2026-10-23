@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "prepare-assets": "node scripts/prepare-assets.mjs",
-    "verify": "node scripts/verify-build.mjs",
+    "verify": "node --experimental-strip-types scripts/verify-build.mjs",
     "smoke:admin": "node --experimental-strip-types scripts/smoke-admin.mjs",
     "dev:admin": "node --experimental-strip-types scripts/dev-admin.mjs"
   },
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@netlify/blobs": "^11.0.2",
+    "@netlify/functions": "^6.0.3",
     "next": "^16.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

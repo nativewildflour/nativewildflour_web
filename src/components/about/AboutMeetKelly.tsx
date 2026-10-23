@@ -12,7 +12,7 @@ export interface AboutMeetKellyProps {
 export function AboutMeetKelly({ content, imageBase }: AboutMeetKellyProps) {
   return (
     <Section tone="snow" title={content.title}>
-      <div className="grid gap-10 md:grid-cols-5 md:items-start">
+      <div className="grid grid-cols-1 gap-10 md:grid-cols-5 md:items-start">
         <div className="space-y-4 text-bark/85 md:col-span-3">
           {content.paragraphs.map((paragraph, index) => (
             <p key={index}>{paragraph}</p>

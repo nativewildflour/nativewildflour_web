@@ -12,7 +12,11 @@ import type { DocumentSpec, ExtraChecks } from '../content-schema';
 import type { CopyIssue } from '../copy-rules';
 import type { PhotoContent } from './images';
 
-/** One cruise dock and the walk from it. `id` is the card's anchor, so it stays a slug. */
+/**
+ * One cruise dock and the walk from it. `id` is a stable slug: the React key and the root of
+ * the card's anchor, namespaced as `dock--<id>` (`dockDomId` in DockCard) so no slug can land on
+ * a fixed id on the page such as `main`.
+ */
 export interface Dock {
   readonly id: string;
   readonly name: string;
@@ -84,7 +88,7 @@ export const DIRECTIONS_SPEC: DocumentSpec = {
         title: {
           kind: 'text',
           label: 'Page heading',
-          hint: 'The main heading of the page. Search results use it too.',
+          hint: 'The main heading of the page. (The title shown in search results is set separately and does not change with it.)',
         },
         lede: { kind: 'text', label: 'Opening paragraph', multiline: true },
         walkBadge: {
@@ -142,7 +146,7 @@ export const DIRECTIONS_SPEC: DocumentSpec = {
             id: {
               kind: 'text',
               label: 'Link id',
-              hint: 'Used in the web address of this card. Lowercase letters, digits and hyphens.',
+              hint: 'Used in the web address of this card, after "#dock--" (for example /directions/#dock--broadway-dock). Lowercase letters, digits and hyphens.',
             },
             name: { kind: 'text', label: 'Dock name' },
             walkMinutes: {
@@ -203,7 +207,14 @@ export const DIRECTIONS_SPEC: DocumentSpec = {
           titleField: 'question',
           item: {
             question: { kind: 'text', label: 'Question' },
-            answer: { kind: 'text', label: 'Answer', multiline: true },
+            answer: {
+              kind: 'text',
+              label: 'Answer',
+              multiline: true,
+              hint: 'Type {hours} where the opening hours belong and {season} where the season note belongs — the site fills in the current wording for you, so the answer never goes out of date.',
+              hoursToken: true,
+              seasonToken: true,
+            },
           },
         },
       },

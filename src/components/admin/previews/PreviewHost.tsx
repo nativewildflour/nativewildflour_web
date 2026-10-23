@@ -5,9 +5,10 @@
  *
  * The draft goes across as soon as the frame says it is listening, and again — briefly
  * debounced — after every edit. The frame reports its height back, so it grows with the page
- * and the owner scrolls the editor, never a box inside it. Pointer events are off: a preview
- * full of live links would carry her off the page mid-edit, and every word in it is already
- * editable in the fields beside it.
+ * and the owner scrolls the editor, never a box inside it. The frame is inert — no pointer, no
+ * keyboard focus, out of the accessibility tree: a preview full of live links would carry her
+ * off the page mid-edit, and every word in it is already editable in the fields beside it. A
+ * visually hidden note says so, since the frame itself is no longer announced.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -77,13 +78,19 @@ export function PreviewHost({ doc, document, title }: PreviewHostProps) {
 
   return (
     <PreviewFrame title={title}>
-      <iframe
-        ref={frameRef}
-        src={previewPath(doc)}
-        title={`Preview of ${title.toLowerCase()}`}
-        className="pointer-events-none block w-full border-0"
-        style={{ height }}
-      />
+      <p className="sr-only">
+        {`A visual preview of ${title.toLowerCase()} as it will look on a phone. Everything in it comes from the fields on this screen.`}
+      </p>
+      <div inert>
+        <iframe
+          ref={frameRef}
+          src={previewPath(doc)}
+          title={`Preview of ${title.toLowerCase()}`}
+          tabIndex={-1}
+          className="pointer-events-none block w-full border-0"
+          style={{ height }}
+        />
+      </div>
     </PreviewFrame>
   );
 }

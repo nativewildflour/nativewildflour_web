@@ -31,13 +31,13 @@ export function DirectionsIntro({ content, children }: DirectionsIntroProps) {
       <p className="mt-5 max-w-2xl text-lg text-bark/80">{content.lede}</p>
 
       <p className="mt-5">
-        <span className="inline-flex items-center gap-2 rounded-full bg-snow px-4 py-2 text-sm font-bold text-bark shadow-card ring-1 ring-wheat">
-          <WalkIcon className="size-4 text-spruce" />
-          {content.walkBadge}
+        <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-snow px-4 py-2 text-sm font-bold text-bark shadow-card ring-1 ring-wheat">
+          <WalkIcon className="size-4 shrink-0 text-spruce" />
+          <span className="min-w-0">{content.walkBadge}</span>
         </span>
       </p>
 
-      <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:items-start">
+      <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] lg:items-start">
         <div className="rounded-3xl bg-snow p-6 shadow-card ring-1 ring-bark/10 sm:p-8">
           <h2 className="text-2xl font-black text-bark">Address and hours</h2>
 

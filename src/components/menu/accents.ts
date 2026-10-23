@@ -15,13 +15,17 @@ export interface MenuAccent {
   readonly color: string;
 }
 
-const MENU_ACCENTS: Record<string, MenuAccent> = {
-  bannock: { stroke: 'text-honey', dot: 'bg-honey', color: 'var(--color-honey)' },
-  'lunch-specials': { stroke: 'text-fireweed', dot: 'bg-fireweed', color: 'var(--color-fireweed)' },
-  'baked-goods': { stroke: 'text-wood', dot: 'bg-wood', color: 'var(--color-wood)' },
-  'coffee-and-tea': { stroke: 'text-spruce', dot: 'bg-spruce', color: 'var(--color-spruce)' },
-  'cold-drinks': { stroke: 'text-blueberry', dot: 'bg-blueberry', color: 'var(--color-blueberry)' },
-};
+/**
+ * A Map, not an object literal: section ids are the owner's slugs, and an object lookup would
+ * resolve one named "constructor" to the inherited Object prototype member.
+ */
+const MENU_ACCENTS: ReadonlyMap<string, MenuAccent> = new Map([
+  ['bannock', { stroke: 'text-honey', dot: 'bg-honey', color: 'var(--color-honey)' }],
+  ['lunch-specials', { stroke: 'text-fireweed', dot: 'bg-fireweed', color: 'var(--color-fireweed)' }],
+  ['baked-goods', { stroke: 'text-wood', dot: 'bg-wood', color: 'var(--color-wood)' }],
+  ['coffee-and-tea', { stroke: 'text-spruce', dot: 'bg-spruce', color: 'var(--color-spruce)' }],
+  ['cold-drinks', { stroke: 'text-blueberry', dot: 'bg-blueberry', color: 'var(--color-blueberry)' }],
+]);
 
 const DEFAULT_ACCENT: MenuAccent = {
   stroke: 'text-honey',
@@ -31,5 +35,5 @@ const DEFAULT_ACCENT: MenuAccent = {
 
 /** Accent for a menu section id; new sections fall back to honey until assigned. */
 export function menuAccent(sectionId: string): MenuAccent {
-  return MENU_ACCENTS[sectionId] ?? DEFAULT_ACCENT;
+  return MENU_ACCENTS.get(sectionId) ?? DEFAULT_ACCENT;
 }

@@ -114,10 +114,31 @@ export const DOCUMENTS: Readonly<Record<DocumentKey, DocumentDefinition>> = {
  */
 export function collectImageIds(document: unknown): readonly string[] {
   const ids: string[] = [];
+  for (const use of collectImageUses(document)) {
+    if (!ids.includes(use.id)) ids.push(use.id);
+  }
+  return ids;
+}
 
-  const walk = (value: unknown): void => {
+/** One photo slot holding an uploaded image: where it sits, and what the owner called it. */
+export interface ImageUse {
+  readonly id: string;
+  /** The slot's caption, which is how the owner knows the picture. */
+  readonly caption: string;
+  /** The validator-style path of the photo's `image` (`bannock.photo.image`), for focusing. */
+  readonly path: string;
+}
+
+/**
+ * Every photo slot that holds an uploaded image, in document order (duplicates kept, since each
+ * slot is its own place to fix). Same shape match as `collectImageIds`.
+ */
+export function collectImageUses(document: unknown): readonly ImageUse[] {
+  const uses: ImageUse[] = [];
+
+  const walk = (value: unknown, path: string): void => {
     if (Array.isArray(value)) {
-      for (const entry of value as readonly unknown[]) walk(entry);
+      (value as readonly unknown[]).forEach((entry, index) => walk(entry, `${path}[${index}]`));
       return;
     }
     if (!isPlainObject(value)) return;
@@ -129,16 +150,17 @@ export function collectImageIds(document: unknown): readonly string[] {
         typeof id === 'string' &&
         IMAGE_ID.test(id) &&
         typeof image.width === 'number' &&
-        typeof image.height === 'number' &&
-        !ids.includes(id)
+        typeof image.height === 'number'
       ) {
-        ids.push(id);
+        uses.push({ id, caption: value.caption, path: path === '' ? 'image' : `${path}.image` });
       }
     }
 
-    for (const entry of Object.values(value)) walk(entry);
+    for (const [key, entry] of Object.entries(value)) {
+      walk(entry, path === '' ? key : `${path}.${key}`);
+    }
   };
 
-  walk(document);
-  return ids;
+  walk(document, '');
+  return uses;
 }

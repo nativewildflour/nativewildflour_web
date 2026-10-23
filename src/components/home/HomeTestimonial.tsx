@@ -24,7 +24,7 @@ export function HomeTestimonial({ content }: HomeTestimonialProps) {
         </blockquote>
         <figcaption className="relative mt-6 flex items-center gap-2 text-sm font-bold tracking-wide text-bark/70">
           <FireweedSprig className="h-6 w-4 shrink-0" />
-          {content.attribution}
+          <span className="min-w-0">{content.attribution}</span>
         </figcaption>
       </figure>
     </Section>

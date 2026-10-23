@@ -18,7 +18,7 @@
 
 import defaultMenu from '@/data/defaults/menu.json';
 import type { MenuContent, MenuPageCopy } from '@/lib/menu-content';
-import { parseMenuContent } from '@/lib/menu-content';
+import { DEFAULT_SPECIALS_LEAD, parseMenuContent } from '@/lib/menu-content';
 
 export const DEFAULT_MENU: MenuContent = (() => {
   const { menu, errors } = parseMenuContent(defaultMenu);
@@ -31,6 +31,13 @@ export const DEFAULT_MENU: MenuContent = (() => {
 const DEFAULT_MENU_PAGE: MenuPageCopy = (() => {
   if (DEFAULT_MENU.page === undefined) {
     throw new Error('src/data/defaults/menu.json has no "page" wording — the menu page needs it.');
+  }
+  // The validator scans a page-less menu's specials paragraph with this lead; it must be the one
+  // the page prints.
+  if (DEFAULT_MENU.page.specialsLead !== DEFAULT_SPECIALS_LEAD) {
+    throw new Error(
+      'src/data/defaults/menu.json page.specialsLead no longer matches DEFAULT_SPECIALS_LEAD in src/lib/menu-content.ts — change both together.',
+    );
   }
   return DEFAULT_MENU.page;
 })();

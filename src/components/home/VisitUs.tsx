@@ -16,7 +16,7 @@ export function VisitUs({ content }: VisitUsProps) {
   return (
     <Section id="visit" tone="snow" eyebrow={content.eyebrow} title={content.title} width="6xl">
       {/* items-start: each card hugs its content instead of stretching to the taller one. */}
-      <div className="grid gap-6 md:grid-cols-2 md:items-start">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-start">
         <div className={CARD}>
           <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-fireweed/10 text-fireweed">
             <MapPinIcon className="h-6 w-6" />

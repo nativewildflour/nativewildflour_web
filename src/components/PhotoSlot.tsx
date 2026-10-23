@@ -1,7 +1,7 @@
 import Image from 'next/image';
 
 import type { PhotoContent } from '@/lib/content/images';
-import { imageSrc } from '@/lib/content/images';
+import { imageSrc, imageSrcSet } from '@/lib/content/images';
 
 /**
  * PHOTO SLOT — an owner-replaceable image placeholder.
@@ -15,10 +15,10 @@ import { imageSrc } from '@/lib/content/images';
  * caption and the alt text:
  *
  *   - `photo` — a slot from a content document. The owner uploads a picture in the admin
- *     editor and it appears here on the next build; nothing in the code changes. `imageBase`
- *     points the `src` somewhere other than the live site's uploads folder (the admin preview
- *     reads from the auth-gated image endpoint, because the files only land in `public/` at
- *     build time).
+ *     editor and it appears here once she publishes; nothing in the code changes. A photo wider
+ *     than 800px also offers its 800px copy in `srcset`. `imageBase` points the `src`
+ *     somewhere other than the live site's uploads endpoint (the admin preview reads the
+ *     auth-gated image endpoint instead, full size, with no `srcset`).
  *   - `src` plus the file's true pixel `width`/`height` — for a picture committed to
  *     `public/images/`, already cropped and resized. The export is unoptimized, so a photo
  *     without its real dimensions would ship unsized and shift the layout.
@@ -64,8 +64,17 @@ export type PhotoSlotProps = PhotoSlotFileProps | PhotoSlotDocumentProps;
 
 interface ResolvedPhoto {
   readonly caption: string;
-  readonly image: { readonly src: string; readonly width: number; readonly height: number } | null;
+  readonly image: {
+    readonly src: string;
+    readonly width: number;
+    readonly height: number;
+    /** Set only for a public upload wider than its 800px copy. */
+    readonly srcSet?: string;
+  } | null;
 }
+
+/** Every slot is full width on phones and two fifths of a ≤ 72rem column from `md` up. */
+const SIZES = '(min-width: 768px) min(40vw, 29rem), 100vw';
 
 /** Collapses the two prop forms into the one thing the markup needs. */
 function resolvePhoto(props: PhotoSlotProps): ResolvedPhoto {
@@ -76,7 +85,14 @@ function resolvePhoto(props: PhotoSlotProps): ResolvedPhoto {
       image:
         image === null
           ? null
-          : { src: imageSrc(image, props.imageBase), width: image.width, height: image.height },
+          : {
+              src: imageSrc(image, props.imageBase),
+              width: image.width,
+              height: image.height,
+              // The admin preview reads the auth-gated endpoint, which serves the full image
+              // only — so it gets no `srcset`, and shows exactly the bytes that were uploaded.
+              srcSet: props.imageBase === undefined ? imageSrcSet(image) : undefined,
+            },
     };
   }
   return {
@@ -97,12 +113,30 @@ export function PhotoSlot(props: PhotoSlotProps) {
     <figure
       className={`w-full transition-transform duration-300 ease-out motion-safe:rotate-1 motion-safe:hover:rotate-0 ${className}`.trim()}
     >
-      {image ? (
+      {image?.srcSet !== undefined ? (
+        // A plain `<img>` on purpose: `images.unoptimized` makes `next/image` drop both `srcSet`
+        // and `sizes`, and this is the one picture with a smaller file to offer. Sized and lazy
+        // the way `next/image` would emit it, so nothing shifts as it loads.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={image.src}
+          srcSet={image.srcSet}
+          sizes={SIZES}
+          alt={caption}
+          width={image.width}
+          height={image.height}
+          loading="lazy"
+          decoding="async"
+          className={`w-full rounded-3xl object-cover shadow-card ${ASPECTS[aspect]}`}
+        />
+      ) : image ? (
         <Image
           src={image.src}
           alt={caption}
           width={image.width}
           height={image.height}
+          // Documents the rendered size; `images.unoptimized` emits no srcset of its own.
+          sizes={SIZES}
           className={`w-full rounded-3xl object-cover shadow-card ${ASPECTS[aspect]}`}
         />
       ) : (

@@ -12,6 +12,7 @@
 
 import type { DocumentParser } from '@/components/admin/api';
 import { DocumentEditorFrame } from '@/components/admin/DocumentEditorFrame';
+import { toleratingSlugs } from '@/components/admin/draft-storage';
 import { PreviewHost } from '@/components/admin/previews/PreviewHost';
 import { SchemaFields } from '@/components/admin/SchemaFields';
 import { useDocumentEditor } from '@/components/admin/use-document-editor';
@@ -37,6 +38,8 @@ interface PageConfig<T extends object> {
   readonly spec: DocumentSpec;
   readonly seed: T;
   readonly parse: DocumentParser<T>;
+  /** `parse`, tolerant of the one structural check an owner can type into (a slug). */
+  readonly parseDraft: DocumentParser<T>;
   readonly validate: (document: T, rules: ContentRules | null) => readonly CopyIssue[];
   readonly summarize: (document: T) => string;
   /** Names the page in the preview box, e.g. "The home page". */
@@ -78,6 +81,7 @@ function buildConfig<T extends object>(
     spec,
     seed: document,
     parse,
+    parseDraft: toleratingSlugs(parse, spec),
     validate: (value, rules) => definition.validate(value, rules).issues,
     summarize,
     previewTitle,
@@ -114,6 +118,7 @@ function PageDocumentEditor<T extends object>({ config }: { readonly config: Pag
     label: config.label,
     seed: config.seed,
     parse: config.parse,
+    parseDraft: config.parseDraft,
     validate: config.validate,
     summarize: config.summarize,
   });

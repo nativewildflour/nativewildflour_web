@@ -16,7 +16,7 @@ export function ShuttleCard({ shuttle, className = '' }: ShuttleCardProps) {
         <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-snow text-blueberry shadow-press">
           <ShuttleIcon />
         </span>
-        <h3 className="text-xl font-black text-bark sm:text-2xl">
+        <h3 className="min-w-0 text-xl font-black text-bark sm:text-2xl">
           Rather ride? The {shuttle.name}
         </h3>
       </div>
@@ -27,7 +27,7 @@ export function ShuttleCard({ shuttle, className = '' }: ShuttleCardProps) {
         {shuttle.notes.map((note, index) => (
           <li key={index} className="flex gap-3 text-bark/85">
             <span aria-hidden="true" className="mt-2.5 size-1.5 shrink-0 rounded-full bg-blueberry" />
-            <span>{note}</span>
+            <span className="min-w-0">{note}</span>
           </li>
         ))}
       </ul>

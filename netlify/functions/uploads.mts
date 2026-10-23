@@ -3,10 +3,14 @@
  * site. This is the one function with no auth in front of it, by design: what it serves is a
  * picture already published on a page anyone can read.
  *
- *   GET  /images/uploads/:id  -> the JPEG bytes, cached forever
- *   HEAD /images/uploads/:id  -> the same headers, no body
+ *   GET  /images/uploads/:id       -> the JPEG bytes, cached forever
+ *   HEAD /images/uploads/:id       -> the same headers, no body
+ *   GET  /images/uploads/w800/:id  -> the photo's 800px copy (`srcset`); the full photo when
+ *                                     it has none (uploads from before the copies existed)
+ *   HEAD /images/uploads/w800/:id  -> the same headers, no body
  *
- * The path is the literal spelling of `UPLOADS_BASE` in `src/lib/content/images.ts` — Netlify
+ * The paths are the literal spellings of `UPLOADS_BASE` and `SMALL_IMAGE_PREFIX` in
+ * `src/lib/content/images.ts` — Netlify
  * reads `config.path` by parsing this file, so it cannot be built from an import. Keep the two
  * in step; `imageSrc()` is what writes these URLs into the markup.
  *
@@ -15,23 +19,24 @@
  * `site-images` blob store and this endpoint is how they reach a visitor. That is affordable
  * because an id is immutable — it is minted per upload and never reused, so the bytes behind a
  * URL can never change and the response is cached indefinitely at the CDN and in the browser.
- * A deleted photo needs no purge either: the delete guard in `./admin-images.mts` refuses while
- * any saved document still references the id, so nothing is left pointing at the URL.
+ * A delete is guarded in `./admin-images.mts` — refused while any saved document or saved
+ * version still references the id — and then purges the CDN copies by their per-id cache tag.
  *
  * Netlify routes by path specificity, so this beats the Next runtime's catch-all `/*` the same
  * way the `/admin/api/*` functions do.
  */
 
 import { getStore } from '@netlify/blobs';
-import { IMAGE_ID } from '../../src/lib/content/images';
+import { IMAGE_ID, SMALL_IMAGE_PREFIX, UPLOADS_BASE } from '../../src/lib/content/images';
 
-/** Must stay the literal `UPLOADS_BASE` + `/:id`. See the note above. */
+/** Must stay the literal `UPLOADS_BASE` + `/:id` and its `SMALL_IMAGE_PREFIX` twin. See above. */
 export const config = {
-  path: '/images/uploads/:id',
+  path: ['/images/uploads/:id', '/images/uploads/w800/:id'],
 };
 
 const IMAGE_STORE = 'site-images';
-const ROUTE_PREFIX = '/images/uploads/';
+const ROUTE_PREFIX = `${UPLOADS_BASE}/`;
+const SMALL_ROUTE_PREFIX = `${UPLOADS_BASE}/${SMALL_IMAGE_PREFIX}/`;
 /** Ids are minted once and never reused, so the bytes behind a URL cannot change. */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
@@ -88,7 +93,12 @@ export default async function uploads(request: Request): Promise<Response> {
     }
 
     const route = new URL(request.url).pathname;
-    const id = route.startsWith(ROUTE_PREFIX) ? route.slice(ROUTE_PREFIX.length) : '';
+    const small = route.startsWith(SMALL_ROUTE_PREFIX);
+    const id = small
+      ? route.slice(SMALL_ROUTE_PREFIX.length)
+      : route.startsWith(ROUTE_PREFIX)
+        ? route.slice(ROUTE_PREFIX.length)
+        : '';
     // The same pattern the upload endpoint mints against: an id this check would refuse is an
     // id no upload could have written, so it is a bad request rather than a missing photo.
     if (!IMAGE_ID.test(id)) {
@@ -99,15 +109,24 @@ export default async function uploads(request: Request): Promise<Response> {
     const headers: Record<string, string> = {
       'Content-Type': 'image/jpeg',
       'Cache-Control': IMMUTABLE,
-      // The CDN keeps its own copy under the same terms; the tag is per-id so a purge could
-      // ever be aimed at one photo rather than the whole site.
+      // The CDN keeps its own copy under the same terms; the tag is per-id so the purge a
+      // delete makes is aimed at one photo rather than the whole site, and the small copy
+      // shares it so that one purge drops both.
       'Netlify-CDN-Cache-Control': IMMUTABLE,
       'Netlify-Cache-Tag': `upload-${id}`,
     };
+    // The small copy's key, falling back to the photo itself: an upload from before the copies
+    // existed (or one whose copy failed to store) still answers its `srcset` URL correctly.
+    // Caching that answer forever is right too — a photo without a copy never gains one.
+    const keys = small ? [`${SMALL_IMAGE_PREFIX}/${id}`, id] : [id];
     if (request.method === 'HEAD') {
       // Same headers, no body. The upload records the byte count in the blob's metadata, so the
       // length the GET would send comes from a metadata read rather than the bytes themselves.
-      const entry = await readMetadata(store, id);
+      let entry: { metadata: Record<string, unknown> } | null = null;
+      for (const key of keys) {
+        entry = await readMetadata(store, key);
+        if (entry !== null) break;
+      }
       if (entry === null) {
         return text(404, `No photo found for "${id}".`);
       }
@@ -121,8 +140,12 @@ export default async function uploads(request: Request): Promise<Response> {
       });
     }
 
-    const bytes = await readImage(store, id);
-    if (bytes === null || bytes === undefined) {
+    let bytes: ArrayBuffer | null = null;
+    for (const key of keys) {
+      bytes = (await readImage(store, key)) ?? null;
+      if (bytes !== null) break;
+    }
+    if (bytes === null) {
       return text(404, `No photo found for "${id}".`);
     }
     return new Response(bytes, { status: 200, headers });

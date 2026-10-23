@@ -7,13 +7,17 @@
 import {
   ADDRESS,
   BUSINESS_NAME,
+  COFFEE_ROASTER,
   FACEBOOK_URL,
   GEO,
+  HOURS_SUMMARY,
   OPENING_HOURS,
   PHONE,
+  SEASON_NOTE,
 } from '@/data/business';
 import { MAP_LINKS } from '@/data/map';
 import type { FaqItem } from '@/lib/content/directions';
+import { expandHoursToken, expandSeasonToken } from '@/lib/copy-rules';
 import type { MenuSectionContent } from '@/lib/menu-content';
 import { LOGO_URL, OG_IMAGE_URL, SITE_URL, absoluteUrl } from '@/lib/site';
 
@@ -132,7 +136,7 @@ export interface FaqPageSchema {
 const TELEPHONE = PHONE.display;
 
 const BUSINESS_DESCRIPTION =
-  'A small independent cafe in Skagway, Alaska serving authentic Alaskan bannock, house-baked goods, and Alaska-roasted Kaladi Brothers coffee.';
+  `A small independent cafe in Skagway, Alaska serving authentic Alaskan bannock, house-baked goods, and Alaska-roasted ${COFFEE_ROASTER}.`;
 
 export function restaurantSchema(): RestaurantSchema {
   return {
@@ -228,7 +232,8 @@ export function faqSchema(items: readonly FaqItem[]): FaqPageSchema {
       name: item.question,
       acceptedAnswer: {
         '@type': 'Answer' as const,
-        text: item.answer,
+        // Same expansion as `DirectionsFaq`: the structured data says what the page says.
+        text: expandSeasonToken(expandHoursToken(item.answer, HOURS_SUMMARY), SEASON_NOTE),
       },
     })),
   };

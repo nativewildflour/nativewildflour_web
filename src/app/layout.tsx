@@ -39,7 +39,9 @@ export const metadata: Metadata = {
   applicationName: BUSINESS_NAME,
   manifest: '/manifest.webmanifest',
   icons: {
-    icon: [{ url: '/icon.png', type: 'image/png', sizes: '512x512' }],
+    // src/app/icon.png is the 192px tab icon (scripts/prepare-assets.mjs); the 512px install
+    // icon is linked from the manifest only.
+    icon: [{ url: '/icon.png', type: 'image/png', sizes: '192x192' }],
     apple: [{ url: '/apple-icon.png', sizes: '180x180' }],
   },
   formatDetection: { telephone: true, address: false, email: false },

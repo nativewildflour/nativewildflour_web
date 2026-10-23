@@ -24,14 +24,16 @@ export function MenuHighlights({ content, sections }: MenuHighlightsProps) {
       lead={content.lead}
       width="6xl"
     >
-      <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {highlights.map((section) => {
+      {/* Dense packing: a full-row featured card that is not first would otherwise leave a
+          hole beside the card before it. */}
+      <ul className="grid grid-flow-row-dense grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {highlights.map((section, index) => {
           const toppings = section.toppings ?? [];
           const featured = toppings.length > 0;
 
           return (
             <li
-              key={section.id}
+              key={`${index}-${section.id}`}
               className={`relative rounded-3xl p-6 shadow-card transition duration-300 ease-out motion-safe:hover:-translate-y-1 hover:shadow-lift ${
                 featured
                   ? 'bg-gradient-to-br from-snow to-wheat/20 ring-2 ring-wheat sm:col-span-2 lg:col-span-3 sm:p-8'

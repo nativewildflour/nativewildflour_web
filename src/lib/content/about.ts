@@ -15,6 +15,7 @@ import type { PhotoContent } from './images';
 /** One of the cards in the "Made in Skagway" row. */
 export interface AboutCard {
   readonly title: string;
+  /** May hold `{season}`, which the page fills in with `SEASON_NOTE`. */
   readonly body: string;
 }
 
@@ -81,7 +82,7 @@ export const ABOUT_SPEC: DocumentSpec = {
         title: {
           kind: 'text',
           label: 'Page heading',
-          hint: 'The main heading of the page. Search results use it too.',
+          hint: 'The main heading of the page. (The title shown in search results is set separately and does not change with it.)',
         },
         lede: { kind: 'text', label: 'Opening paragraph', multiline: true },
       },
@@ -150,7 +151,13 @@ export const ABOUT_SPEC: DocumentSpec = {
           max: 3,
           item: {
             title: { kind: 'text', label: 'Card heading' },
-            body: { kind: 'text', label: 'Card text', multiline: true },
+            body: {
+              kind: 'text',
+              label: 'Card text',
+              multiline: true,
+              hint: 'In any card, type {season} where the season note belongs — the site fills in its current wording (the same line the home and directions pages show), so the card never goes out of date.',
+              seasonToken: true,
+            },
           },
         },
       },

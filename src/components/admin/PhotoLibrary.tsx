@@ -6,7 +6,8 @@
  *
  * The photo slots on the page editors can do all of this too, one slot at a time. This screen
  * exists for the questions a slot cannot answer: what is in here, what is it costing, and what
- * is safe to throw away. A picture a page still points at is not safe, so its delete button is
+ * is safe to throw away. A picture a page still points at is not safe, and neither is one a
+ * page's saved versions still hold (restoring one would put it back), so its delete button is
  * off and says why — the server refuses that anyway, and being told before the click is kinder
  * than being told after.
  *
@@ -17,12 +18,13 @@
 import Image from 'next/image';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ImageRecord, ImagesResult } from '@/components/admin/api';
+import type { DocumentKey, ImageRecord, ImagesResult } from '@/components/admin/api';
 import { deleteImage, imagePreviewUrl, listImages, uploadImage } from '@/components/admin/api';
 import { ActionButton } from '@/components/admin/buttons';
 import { ConfirmDialog } from '@/components/admin/ConfirmDialog';
 import { resizeImage } from '@/components/admin/image-resize';
 import {
+  DOCUMENT_LABELS,
   describeUsedBy,
   formatBytes,
   formatUploaded,
@@ -46,6 +48,21 @@ const PROGRESS_TEXT: Record<Progress, string> = {
   uploading: 'Uploading…',
   deleting: 'Deleting…',
 };
+
+/**
+ * "Kept in the saved versions of the home page — …" for a photo only version history still
+ * holds, or `null`. The server refuses that delete (a restore would put the photo back on the
+ * site), so the card says so up front instead of leaving it to a refused click.
+ */
+function describeInHistory(inHistory: readonly DocumentKey[]): string | null {
+  const names = inHistory.map((key) => DOCUMENT_LABELS[key]);
+  if (names.length === 0) return null;
+  const where =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `Kept in the saved versions of ${where} — it can be deleted once those versions age out.`;
+}
 
 /** The library's answer, as a panel state. */
 function toState(result: ImagesResult): LibraryState {
@@ -107,6 +124,7 @@ export function PhotoLibrary() {
       width: prepared.width,
       height: prepared.height,
       name: file.name,
+      small: prepared.small,
     });
     setProgress('idle');
 
@@ -230,6 +248,9 @@ export function PhotoLibrary() {
           <ul className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {state.images.map((image) => {
               const used = describeUsedBy(image.usedBy);
+              const kept = describeInHistory(image.inHistory);
+              const inUse = image.usedBy.length > 0;
+              const locked = inUse || kept !== null;
               const added = formatUploaded(image.uploadedAt);
               return (
                 <li
@@ -252,26 +273,30 @@ export function PhotoLibrary() {
                     {added === '' ? '' : ` · added ${added}`}
                   </p>
                   <p className="mt-1 text-sm text-bark/70">
-                    {used ?? 'Not used on the site yet.'}
+                    {used ?? (kept === null ? 'Not used on the site yet.' : 'Not on the site right now.')}
                   </p>
                   <ActionButton
                     variant="subtle"
                     size="sm"
                     className="mt-3"
-                    disabled={busy || image.usedBy.length > 0}
+                    disabled={busy || locked}
                     title={
-                      image.usedBy.length > 0
+                      inUse
                         ? 'Take this photo off the pages that use it first.'
-                        : 'Delete this photo for good.'
+                        : kept !== null
+                          ? 'Saved versions of a page still hold this photo.'
+                          : 'Delete this photo for good.'
                     }
                     onClick={() => setPendingDelete(image)}
                   >
                     Delete
                   </ActionButton>
-                  {image.usedBy.length > 0 ? (
+                  {inUse ? (
                     <p className="mt-1 text-sm text-bark/70">
                       To delete it, first remove it from the page that uses it.
                     </p>
+                  ) : kept !== null ? (
+                    <p className="mt-1 text-sm text-bark/70">{kept}</p>
                   ) : null}
                 </li>
               );

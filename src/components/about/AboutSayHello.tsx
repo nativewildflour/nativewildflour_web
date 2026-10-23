@@ -79,13 +79,13 @@ export interface AboutSayHelloProps {
 export function AboutSayHello({ content }: AboutSayHelloProps) {
   return (
     <Section tone="snow" eyebrow={content.eyebrow} title={content.title} lead={content.lead}>
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <div className={`bg-cream ${ABOUT_CARD}`}>
           <h3 className="text-xl font-bold text-bark">Find us</h3>
           <ul className="mt-4 space-y-4">
             <li className="flex gap-3">
               <PinIcon />
-              <span>
+              <span className="min-w-0">
                 {ADDRESS_ONE_LINE}
                 <span className="block text-bark/70">{content.locationNote}</span>
               </span>
@@ -99,7 +99,11 @@ export function AboutSayHello({ content }: AboutSayHelloProps) {
             <li className="flex gap-3">
               <ChatIcon />
               <a href={FACEBOOK_URL} target="_blank" rel="noopener noreferrer" className={LINK}>
-                <span translate="no">{BUSINESS_NAME}</span> on Facebook
+                {/* One inline span around the whole label: as separate flex items, the name
+                    and " on Facebook" would lose the space between them. */}
+                <span>
+                  <span translate="no">{BUSINESS_NAME}</span> on Facebook
+                </span>
               </a>
             </li>
           </ul>

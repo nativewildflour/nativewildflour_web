@@ -1,3 +1,4 @@
+import { BrandText } from '@/components/BrandText';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { ButtonLink } from '@/components/ButtonLink';
 import { TitleStroke } from '@/components/Decor';
@@ -7,6 +8,7 @@ import { Section } from '@/components/Section';
 import { GoodToKnow } from '@/components/menu/GoodToKnow';
 import { MenuJumpLinks } from '@/components/menu/MenuJumpLinks';
 import { SpecialsCallout } from '@/components/menu/SpecialsCallout';
+import { COFFEE_ROASTER } from '@/data/business';
 import { menuPageCopy } from '@/lib/default-menu';
 import type { BreadcrumbItem } from '@/lib/schema';
 import { breadcrumbSchema, menuSchema } from '@/lib/schema';
@@ -20,8 +22,9 @@ const BREADCRUMBS: readonly BreadcrumbItem[] = [
 
 export const metadata = buildMetadata({
   title: 'Menu',
-  description:
-    'Alaskan bannock with toppings from butter to homemade rhubarb jam, savory lunch specials, house-baked goods and Kaladi Brothers coffee in Skagway, Alaska.',
+  // Names only what the code pins down (bannock, the roaster, the town): every menu item is the
+  // owner's to rename or remove, and this description is not regenerated when she does.
+  description: `Our menu: fresh-fried Alaskan bannock with your pick of toppings, house-baked treats and ${COFFEE_ROASTER}, made fresh daily in Skagway, Alaska.`,
   path: '/menu/',
 });
 
@@ -42,7 +45,7 @@ export default async function MenuPage() {
       <Section tone="parchment" flourish={false}>
         <Breadcrumbs items={BREADCRUMBS} />
         <p className="mt-6 text-sm font-bold tracking-[0.18em] text-wood uppercase">
-          {page.eyebrow}
+          <BrandText text={page.eyebrow} />
         </p>
         <h1 className="mt-2 text-4xl font-black text-bark sm:text-6xl">Menu</h1>
         <TitleStroke draw className="mt-3 h-2 w-28 text-honey" />
@@ -59,12 +62,14 @@ export default async function MenuPage() {
 
         <h2 className="mt-14 text-3xl font-black text-bark sm:text-4xl">{page.sectionsTitle}</h2>
         <TitleStroke />
-        <div className="mt-8 grid gap-6 sm:grid-cols-2">
-          {menu.sections.map((section) => {
+        {/* A featured card spans the full row; dense packing lets the next half-width card
+            fill the gap it would otherwise leave beside the card before it. */}
+        <div className="mt-8 grid grid-flow-row-dense grid-cols-1 gap-6 sm:grid-cols-2">
+          {menu.sections.map((section, index) => {
             const featured = Boolean(section.toppings?.length);
             return (
               <MenuSection
-                key={section.id}
+                key={`${index}-${section.id}`}
                 section={section}
                 className={featured ? 'sm:col-span-2' : ''}
                 {...(section.toppings?.length

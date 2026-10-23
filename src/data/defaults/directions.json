@@ -101,7 +101,7 @@
       },
       {
         "question": "What are your hours?",
-        "answer": "Sunday–Friday, 9:00 AM – 4:00 PM. Closed Saturday. Open for the summer cruise season — seasonal updates are posted on Facebook."
+        "answer": "{hours} {season}"
       },
       {
         "question": "Do you take reservations?",

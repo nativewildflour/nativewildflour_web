@@ -66,6 +66,15 @@ export function DocumentEditorFrame<T>({
   }
 
   const { draftPrompt, confirm, issues, mode, label } = editor;
+  /** The draft started from a version that has since been replaced by another publish. */
+  const draftIsBehind =
+    draftPrompt !== null &&
+    draftPrompt.base !== undefined &&
+    editor.baseVersion !== undefined &&
+    draftPrompt.base !== editor.baseVersion;
+  const draftBehindNote = draftIsBehind
+    ? ` They were started before the ${label} was last published, so publishing them would replace those newer changes — look them over first.`
+    : '';
 
   return (
     <div>
@@ -148,7 +157,7 @@ export function DocumentEditorFrame<T>({
       {mode === 'offline' ? (
         <div className="mt-4 rounded-2xl bg-wheat/25 p-4 ring-1 ring-honey/60">
           <p className="font-semibold text-bark">
-            {`This dev server can’t reach the ${label} store, so publishing is turned off. You can try out edits here; to publish for real, open the editor on the live site or run `}
+            {`The ${label} store can’t be reached, so editing and publishing are turned off and what you see is the built-in copy. Any draft saved on this device is kept for when it loads. To edit for real, open the editor on the live site (or reload if you are on it), or run `}
             <code className="rounded bg-snow px-1.5 py-0.5 font-mono text-sm">netlify dev</code>.
           </p>
         </div>
@@ -244,8 +253,8 @@ export function DocumentEditorFrame<T>({
         onDismiss={editor.deferDraft}
       >
         {draftPrompt?.savedAt
-          ? `Unpublished edits from ${formatWhen(draftPrompt.savedAt)} are saved on this device. Resume them, or discard them and start from the ${label} that just loaded.`
-          : `Unpublished edits are saved on this device. Resume them, or discard them and start from the ${label} that just loaded.`}
+          ? `Unpublished edits from ${formatWhen(draftPrompt.savedAt)} are saved on this device. Resume them, or discard them and start from the ${label} that just loaded.${draftBehindNote}`
+          : `Unpublished edits are saved on this device. Resume them, or discard them and start from the ${label} that just loaded.${draftBehindNote}`}
       </ConfirmDialog>
     </div>
   );

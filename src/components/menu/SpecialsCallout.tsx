@@ -1,5 +1,6 @@
 import { ButtonLink } from '@/components/ButtonLink';
 import { FACEBOOK_URL } from '@/data/business';
+import { specialsText } from '@/lib/menu-content';
 
 export interface SpecialsCalloutProps {
   /** The box heading, from the menu document's page wording. */
@@ -9,12 +10,6 @@ export interface SpecialsCalloutProps {
   /** The menu document's specials note. */
   readonly note: string;
   readonly className?: string;
-}
-
-/** The box's one paragraph: the opening line, when there is one, then the note. */
-export function specialsText(lead: string, note: string): string {
-  const opening = lead.trim();
-  return opening === '' ? note : `${opening} ${note}`;
 }
 
 /**

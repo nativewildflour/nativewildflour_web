@@ -14,16 +14,28 @@ export interface MenuSectionProps {
   readonly className?: string;
 }
 
+/**
+ * The DOM id (and `/menu/` anchor) of a section card. Section ids are the owner's slugs, so a
+ * bare slug could land on a fixed id ("main", "todays-special-heading", an admin heading) or on
+ * another section's derived id ("bannock" + "-heading" = a section named "bannock-heading").
+ * `SLUG` forbids "--" and no fixed id on the site contains it, so ids built with "--" as the
+ * separator can equal neither.
+ */
+export function menuSectionDomId(sectionId: string, part?: 'heading' | 'chips'): string {
+  return part ? `menu--${sectionId}--${part}` : `menu--${sectionId}`;
+}
+
 /** One menu section, set like a printed menu card. No prices, ever. */
 export function MenuSection({ section, chips, chipsLabel, className = '' }: MenuSectionProps) {
-  const chipsHeadingId = `${section.id}-chips`;
+  const headingId = menuSectionDomId(section.id, 'heading');
+  const chipsHeadingId = menuSectionDomId(section.id, 'chips');
   const featured = Boolean(chips && chips.length > 0);
   const accent = menuAccent(section.id);
 
   return (
     <section
-      id={section.id}
-      aria-labelledby={`${section.id}-heading`}
+      id={menuSectionDomId(section.id)}
+      aria-labelledby={headingId}
       // `menu-card` + the accent variable drive the `:target` flash after a jump-link hop.
       style={{ '--target-accent': accent.color } as CSSProperties}
       className={`menu-card rounded-3xl p-6 shadow-card sm:p-8 ${
@@ -32,7 +44,7 @@ export function MenuSection({ section, chips, chipsLabel, className = '' }: Menu
           : 'bg-snow ring-1 ring-bark/10'
       } ${className}`.trim()}
     >
-      <h3 id={`${section.id}-heading`} className="text-2xl font-black text-bark">
+      <h3 id={headingId} className="text-2xl font-black text-bark">
         {section.name}
       </h3>
       <TitleStroke className={`mt-2 h-2 w-16 ${accent.stroke}`} />
