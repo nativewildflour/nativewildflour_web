@@ -1,0 +1,381 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand palette — see docs/BRIEF.md §3. */
+  --color-cream: #FFF8EC;
+  --color-bark: #3B2A1A;
+  --color-wood: #8B5A2B;
+  --color-wheat: #E9B949;
+  --color-honey: #C98A1B;
+  --color-fireweed: #C7407B;
+  --color-blueberry: #3A5FA8;
+  --color-spruce: #2F5D46;
+  --color-sky: #BFE0F5;
+  --color-snow: #FFFFFF;
+
+  /* Derived shades of the palette above — declared once here, never inline. */
+  --color-parchment: #FAEDD2;
+  --color-blueberry-deep: #2C4880;
+  --color-fireweed-deep: #9E2F60;
+  --color-spruce-deep: #234939;
+
+  /* The home hero's Taiya Inlet scene: distance painted as sky mixed into the palette,
+     so the far range, the nearer range and the water sit in depth without a new hue. */
+  --color-peak-far: color-mix(in srgb, var(--color-blueberry) 20%, var(--color-sky));
+  --color-peak-near: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--color-spruce) 50%, var(--color-blueberry)) 55%,
+    var(--color-sky)
+  );
+  --color-inlet: color-mix(in srgb, var(--color-blueberry) 34%, var(--color-sky));
+
+  /* Warm bark-tinted elevation, instead of neutral black shadows. */
+  --shadow-card: 0 1px 2px rgb(59 42 26 / 0.06), 0 10px 24px -14px rgb(59 42 26 / 0.25);
+  --shadow-lift: 0 2px 4px rgb(59 42 26 / 0.08), 0 18px 36px -14px rgb(59 42 26 / 0.3);
+  --shadow-press: 0 1px 0 0 rgb(59 42 26 / 0.2);
+
+  /* Type — bound to the next/font variables set on <html> in src/app/layout.tsx. */
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  --font-body: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: auto;
+    /* Anchor jumps and keyboard-focus scrolls land clear of the sticky header. */
+    scroll-padding-top: 6.5rem;
+    -webkit-text-size-adjust: 100%;
+    /* Buttons and links provide their own pressed states. */
+    -webkit-tap-highlight-color: transparent;
+    /* The scrollbar is part of the page: a wood thumb over the cream, not UA gray. */
+    scrollbar-color: color-mix(in srgb, var(--color-wood) 55%, transparent) transparent;
+  }
+
+  a,
+  button,
+  summary {
+    touch-action: manipulation;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
+
+  body {
+    background-color: var(--color-cream);
+    color: var(--color-bark);
+    font-family: var(--font-body);
+    font-size: 1.0625rem;
+    line-height: 1.65;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    /* Owner text can hold one long unbroken run (a pasted link). `break-word` lets it break
+       once it overflows its line without lowering any box's min-content size, so button rows
+       still wrap whole buttons. Boxes that must shrink below such a run carry `min-w-0` (flex
+       items) or sit in a `grid-cols-1` track (grids) where the text renders. */
+    overflow-wrap: break-word;
+  }
+
+  /* Paper grain over the whole page: a tiny inline SVG noise tile at very low
+     opacity, fixed so it never repaints on scroll. Purely decorative. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    pointer-events: none;
+    opacity: 0.05;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-blueberry);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: var(--color-sky);
+    color: var(--color-bark);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Skip link: off-screen until it receives keyboard focus. */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    z-index: 100;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .skip-link:focus-visible,
+  .skip-link:focus {
+    left: 0.75rem;
+    top: 0.75rem;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.5rem;
+    background-color: var(--color-blueberry);
+    color: var(--color-snow);
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  /* Page gutter used by Container: the standard responsive padding, widened to
+     clear device notches under viewport-fit=cover. max() of both insets keeps
+     the centered layout symmetric. */
+  .container-gutter {
+    padding-inline: max(1rem, env(safe-area-inset-left), env(safe-area-inset-right));
+  }
+
+  @media (min-width: 640px) {
+    .container-gutter {
+      padding-inline: max(1.5rem, env(safe-area-inset-left), env(safe-area-inset-right));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container-gutter {
+      padding-inline: max(2rem, env(safe-area-inset-left), env(safe-area-inset-right));
+    }
+  }
+
+  /* Primary-nav link with a honey underline that draws in from the left. */
+  .nav-link {
+    position: relative;
+  }
+
+  .nav-link::after {
+    content: "";
+    position: absolute;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.4rem;
+    height: 3px;
+    border-radius: 9999px;
+    background-color: var(--color-honey);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 200ms ease-out;
+  }
+
+  .nav-link:hover::after,
+  .nav-link:focus-visible::after,
+  /* The current page keeps its underline drawn — same signal the disclosure nav gives. */
+  .nav-link[aria-current='page']::after {
+    transform: scaleX(1);
+  }
+
+  /* Entrance for the hero: a gentle rise-and-fade. The global reduced-motion
+     override collapses the duration, which lands elements in their final state. */
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .rise {
+    animation: rise 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .rise-2 {
+    animation-delay: 90ms;
+  }
+
+  .rise-3 {
+    animation-delay: 180ms;
+  }
+
+  .rise-4 {
+    animation-delay: 270ms;
+  }
+
+  /* --- Authored entrances ---------------------------------------------------
+     One per page: the hand-drawn stroke under a page title, or the fireweed
+     sprig in the hero. Every animation here fills `both`, so the global
+     reduced-motion override collapses it straight into its final state. */
+
+  /* A stroke that draws itself. Requires pathLength="1" on the path. */
+  @keyframes draw-in {
+    from {
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+
+  .stroke-draw path {
+    stroke-dasharray: 1;
+    animation: draw-in 700ms cubic-bezier(0.16, 1, 0.3, 1) 150ms both;
+  }
+
+  /* The sprig blooms: the stem draws upward, then leaves unfurl as the line
+     passes them, then the blossoms pop open top-down. Scale-only, so each
+     part keeps the opacity written in its SVG attributes. */
+  @keyframes bloom-pop {
+    from {
+      scale: 0;
+    }
+    to {
+      scale: 1;
+    }
+  }
+
+  .sprig-bloom .sprig-stem {
+    stroke-dasharray: 1;
+    animation: draw-in 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .sprig-bloom .sprig-leaf,
+  .sprig-bloom .sprig-flower {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: bloom-pop 400ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+
+  .sprig-bloom .sprig-leaf {
+    animation-delay: 240ms;
+  }
+
+  .sprig-bloom path.sprig-leaf:last-of-type {
+    animation-delay: 320ms;
+  }
+
+  .sprig-bloom .sprig-flower:nth-of-type(1) {
+    animation-delay: 400ms;
+  }
+
+  .sprig-bloom .sprig-flower:nth-of-type(2) {
+    animation-delay: 460ms;
+  }
+
+  .sprig-bloom .sprig-flower:nth-of-type(3) {
+    animation-delay: 520ms;
+  }
+
+  .sprig-bloom .sprig-flower:nth-of-type(4) {
+    animation-delay: 580ms;
+  }
+
+  .sprig-bloom .sprig-flower:nth-of-type(5) {
+    animation-delay: 640ms;
+  }
+
+  /* --- State-explaining motion ---------------------------------------------- */
+
+  /* FAQ disclosure: the answer unfolds. Browsers with interpolate-size get a
+     true height transition; everywhere else the fade-rise still explains the
+     change and the height simply snaps. */
+  .faq {
+    interpolate-size: allow-keywords;
+  }
+
+  .faq details::details-content {
+    block-size: 0;
+    overflow-y: clip;
+    transition:
+      block-size 300ms cubic-bezier(0.16, 1, 0.3, 1),
+      content-visibility 300ms allow-discrete;
+  }
+
+  .faq details[open]::details-content {
+    block-size: auto;
+  }
+
+  @keyframes faq-reveal {
+    from {
+      opacity: 0;
+      translate: 0 -0.25rem;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+
+  .faq details[open] .faq-answer {
+    animation: faq-reveal 280ms cubic-bezier(0.16, 1, 0.3, 1) 60ms both;
+  }
+
+  /* Small-screen nav disclosure. Removing [hidden] re-renders the panel, which
+     restarts the animation on every open. */
+  @keyframes panel-drop {
+    from {
+      opacity: 0;
+      translate: 0 -0.5rem;
+    }
+    to {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+
+  .nav-panel:not([hidden]) {
+    animation: panel-drop 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* After a jump-link hop, the landed menu card flashes its category accent —
+     the same color as the jump chip's legend dot — then lets go. */
+  .menu-card {
+    outline: 3px solid transparent;
+    outline-offset: 6px;
+  }
+
+  /* The smooth scroll to a far card takes up to ~1.2s, so the flash holds at
+     full strength past that before letting go — otherwise it burns out
+     mid-journey and the reader never sees it land. */
+  @keyframes target-flash {
+    0%,
+    45% {
+      outline-color: var(--target-accent, var(--color-honey));
+    }
+    100% {
+      outline-color: transparent;
+    }
+  }
+
+  .menu-card:target {
+    animation: target-flash 2600ms ease-out 300ms both;
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "hero": {
+    "heading": "Authentic Alaskan Bannock in Skagway, Alaska",
+    "accentWord": "Bannock",
+    "lede": "Fresh-fried bannock from a passed-down family recipe, house-baked cookies and muffins, and Alaska-roasted Kaladi Brothers Coffee. Find our little cafe at First Avenue & State Street in downtown Skagway — about 5–8 minutes on foot from the Broadway Dock."
+  },
+  "bannock": {
+    "eyebrow": "Fresh from the fryer",
+    "title": "What is bannock?",
+    "paragraphs": [
+      "Bannock is a simple, hearty bread — flour, water, a little fat and leavening — pan-fried or baked until golden. It is a beloved staple across Alaska Native and First Nations communities and throughout the North, and families pass down their own versions.",
+      "At Native WILDFlour it is fried to order and served with your choice of topping — from butter and honey to Kelly’s homemade rhubarb jam."
+    ],
+    "photo": {
+      "caption": "Fresh-fried bannock, ready for a topping",
+      "image": null
+    },
+    "features": [
+      {
+        "icon": "heart",
+        "title": "Family recipe",
+        "body": "Our bannock comes from a recipe passed down in Kelly’s family, and every piece is fried to order."
+      },
+      {
+        "icon": "sunrise",
+        "title": "Made fresh daily",
+        "body": "Bannock, cookies, muffins and the savory lunch special are made fresh every day — and the specials often sell out."
+      },
+      {
+        "icon": "cup",
+        "title": "Alaska-roasted coffee",
+        "body": "We proudly serve Kaladi Brothers Coffee, roasted in Alaska, alongside hot tea and cold drinks."
+      }
+    ]
+  },
+  "highlights": {
+    "eyebrow": "From the counter",
+    "title": "Menu highlights",
+    "lead": "Fried, baked and brewed fresh every day. The full list — including cold drinks — is on the menu page."
+  },
+  "visit": {
+    "eyebrow": "First Avenue & State Street",
+    "title": "Visit us",
+    "locationNote": "On the corner, one block west of Broadway at the southern end of downtown.",
+    "cruiseTitle": "Off a cruise ship?",
+    "cruiseBody": "The walk from the Broadway Dock takes about 5–8 minutes, flat and paved the whole way, and we are one block west of Broadway on 1st Avenue. Our directions page has step-by-step routes from each dock, approximate walking times and the SMART shuttle."
+  },
+  "testimonial": {
+    "quote": "This is the ONLY authentic bannock available in Skagway. The owner, Kelly, is an absolute gem… Armed with her passed down family recipe, her bannock melts in your mouth and fills you with joy. Enjoy a variety of toppings including her own hand made rhubarb jam!",
+    "attribution": "Kayla F., Facebook recommendation"
+  },
+  "meetKelly": {
+    "eyebrow": "The baker",
+    "title": "Meet Kelly",
+    "paragraphs": [
+      "Kelly trained at the Culinary Art Institute in Seattle, but her greatest inspiration is her Grammy, who “filled our hearts and tummies with the smell of fresh baking.”",
+      "Her Grammy’s love, generosity and recipes inspire everything Kelly makes, starting with the bannock from the family recipe. Native WILDFlour is her small, independent cafe at First Avenue & State Street."
+    ]
+  },
+  "facebook": {
+    "title": "Daily specials are posted on Facebook",
+    "body": "The savory bannock special changes most days — see what Kelly is making today before you walk over."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "note": "Canonical machine-readable content rules from docs/BRIEF.md §2: the banned-vocabulary list plus the expected opening hours and open days (which must match OPENING_HOURS in src/data/business.ts — the gate checks) and the placeholder markers. Feeds scripts/verify-build.mjs (the acceptance gate), the publish endpoint (netlify/functions/admin-content.mts), and the admin editors — which fetch these rules at runtime from the auth-gated /admin/api/rules endpoint, never from a client bundle. These strings are rules, not copy — they never render on the public site and never ship in out/.",
+  "forbiddenWords": [
+    "food truck",
+    "truck",
+    "trailer",
+    "mobile",
+    "cart",
+    "van",
+    "wheels",
+    "pop-up",
+    "612-0303"
+  ],
+  "expectedHours": {
+    "opens": "09:00",
+    "closes": "16:00",
+    "days": ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+  },
+  "placeholders": ["undefined", "[object Object]", "NaN"]
+}

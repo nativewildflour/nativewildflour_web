@@ -1,0 +1,17 @@
+node_modules/
+.next/
+out/
+.netlify/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# machine-local Claude Code permissions
+.claude/settings.local.json
